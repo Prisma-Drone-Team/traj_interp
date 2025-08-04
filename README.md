@@ -1,64 +1,66 @@
 # Trajectory Interpolator (traj_interp)
 
-Nodo ROS2 dedicato per l'interpolazione smooth di traiettorie per droni PX4.
+# Trajectory Interpolator (traj_interp)
 
-## 🎯 Caratteristiche
+A ROS2 node that interpolates waypoints from external RRT algorithms based on a second-order filter
 
-- ✅ **Interpolazione ffilter**: Algoritmo dal lee_controller per traiettorie smooth
-- ✅ **Seguimento continuo**: Waypoints seguiti in sequenza senza fermarsi  
-- ✅ **Gestione path dinamica**: Nuovo path scarta quello precedente immediatamente
-- ✅ **Compatibilità PX4**: Interface standard con px4_msgs
-- ✅ **Fix path switching**: Risolto il bug di commutazione tra path
-- ✅ **Auto-heading**: Yaw calcolato automaticamente dalla direzione di movimento
-- ✅ **Offboard all'avvio**: Modalità offboard attiva subito (solo hover)
-- ✅ **Auto-arm intelligente**: Arm automatico al primo path o se il drone è atterrato
-- ✅ **Auto-disarm**: Disarm automatico quando atterrato
+## 🎯 Features
+
+- ✅ **Filtered Interpolation**: Algorithm adapted from the lee_controller for smooth trajectories.
+- ✅ **Continuous Tracking**: Waypoints are followed sequentially without stopping.
+- ✅ **Dynamic Path Management**: New paths immediately replace the previous one.
+- ✅ **PX4 Compatibility**: Standard interface using px4_msgs.
+- ✅ **Fixed Path Switching**: Resolved bug when switching between paths.
+- ✅ **Auto-heading**: Yaw automatically calculated based on the direction of movement.
+- ✅ **Offboard at Startup**: Offboard mode activated immediately (hover only).
+- ✅ **Intelligent Auto-arm**: Automatically arms on the first path or when the drone is landed.
+- ✅ **Auto-disarm**: Automatically disarms when landed.
 
 ## 🚀 Quick Start
 
-### Compilazione
+### Build
 ```bash
 cd /your/ros2_workspace
 colcon build --packages-select traj_interp
 source install/setup.bash
 ```
 
-### Avvio
+### Launch
 ```bash
 ros2 launch traj_interp trajectory_interpolator.launch.py
 ```
 
-### Test con Path
+### Testing with Paths
 ```bash
-# Quadrato
+# Square Path
 ros2 topic pub /trajectory_path nav_msgs/Path '{
-  header: {frame_id: "odom"},
-  poses: [
-    {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
-  ]
+    header: {frame_id: "odom"},
+    poses: [
+        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
+    ]
 }' --once
 
-# Linea
+# Linear Path
 ros2 topic pub /trajectory_path nav_msgs/Path '{
-  header: {frame_id: "odom"},
-  poses: [
-    {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 1.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-    {header: {frame_id: "odom"}, pose: {position: {x: 3.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
-  ]
+    header: {frame_id: "odom"},
+    poses: [
+        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 1.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "odom"}, pose: {position: {x: 3.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
+    ]
 }' --once
 ```
 
 ## 📊 Topics
 
 ### Input
-- `/trajectory_path` (nav_msgs/Path) - Waypoints da seguire
-- `/px4/odometry/out` (nav_msgs/Odometry) - Posizione drone
+- `/trajectory_path` (nav_msgs/Path) - Waypoints to be followed.
+- `/px4/odometry/out` (nav_msgs/Odometry) - Drone position.
 
 ### Output  
 - `fmu/in/offboard_control_mode` (px4_msgs/OffboardControlMode)
@@ -66,62 +68,52 @@ ros2 topic pub /trajectory_path nav_msgs/Path '{
 - `/px4/trajectory_setpoint_enu` (trajectory_msgs/MultiDOFJointTrajectoryPoint)
 - `/trajectory_interpolator/status` (std_msgs/String)
 
-## ⚙️ Parametri Configurabili
+## ⚙️ Configurable Parameters
 
 File: `config/trajectory_interpolator.yaml`
 
 ```yaml
 # Performance
-ref_vel_max: 1.0          # Velocità massima [m/s]
-ref_acc_max: 1.0          # Accelerazione massima [m/s²]
-ref_jerk_max: 2.0         # Jerk massimo [m/s³]
+ref_vel_max: 1.0          # Maximum velocity [m/s]
+ref_acc_max: 1.0          # Maximum acceleration [m/s²]
+ref_jerk_max: 2.0         # Maximum jerk [m/s³]
 
 # Smoothness  
-ref_omega: 1.0            # Frequenza filtro [rad/s] 
-ref_zeta: 0.7             # Smorzamento
+ref_omega: 1.0            # Filter frequency [rad/s] 
+ref_zeta: 0.7             # Damping ratio
 
 # Precision
-waypoint_tolerance: 0.1   # Tolleranza waypoint [m]
-control_frequency: 50.0   # Frequenza controllo [Hz]
+waypoint_tolerance: 0.1   # Waypoint tolerance [m]
+control_frequency: 50.0   # Control frequency [Hz]
 ```
 
-## 🔧 Stati del Nodo
+## 🔧 Node States
 
-- **IDLE**: In attesa di path
-- **FOLLOWING_TRAJECTORY**: Seguendo traiettoria
-- **STOPPED**: Fermato per nuovo path (transizione)
+- **IDLE**: Awaiting path.
+- **FOLLOWING_TRAJECTORY**: Following trajectory.
+- **STOPPED**: Stopped awaiting a new path (transition state).
 
 ## 🐛 Monitoring
 
 ```bash
-# Status nodo
+# Node status
 ros2 topic echo /trajectory_interpolator/status
 
-# Setpoint interpolati
+# Interpolated setpoints
 ros2 topic echo /px4/trajectory_setpoint_enu
 
-# Path ricevuto
+# Received path
 ros2 topic echo /trajectory_path
 ```
 
-## 🔄 Algoritmo ffilter
+## 🔄 Second-Order Filter
 
-L'algoritmo implementa limitazioni fisiche per:
-- **Jerk** (derivata accelerazione)
-- **Accelerazione** 
-- **Velocità**
+The algorithm enforces physical limitations for:
+- **Jerk** (rate of change of acceleration)
+- **Acceleration**
+- **Velocity**
 
-Con filtro del secondo ordine:
+Using a second-order filter:
 ```
 acceleration = ω² × error - 2ζω × velocity
 ```
-
-## ✅ Fix Implementati
-
-- **Path switching**: Nuovo path ora riparte automaticamente
-- **State machine**: Gestione corretta stati IDLE/STOPPED/FOLLOWING  
-- **Thread safety**: Mutex per accesso coda waypoints
-- **Smooth stopping**: Arresto graduale su nuovo path
-
----
-
