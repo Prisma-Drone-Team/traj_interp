@@ -1,7 +1,5 @@
 # Trajectory Interpolator (traj_interp)
 
-# Trajectory Interpolator (traj_interp)
-
 A ROS2 node that interpolates waypoints from external RRT algorithms based on a second-order filter
 
 ## 🎯 Features
