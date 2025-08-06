@@ -4,18 +4,18 @@
 
 ## Overview
 
-The `traj_interp` package provides B-spline interpolation for smooth trajectory execution, converting discrete waypoints from the `path_planner` into continuous, smooth trajectories compatible with PX4 offboard control.
+The `traj_interp` package provides second-order filtered interpolation for smooth trajectory execution, converting discrete waypoints from the `path_planner` into continuous, smooth trajectories compatible with PX4 offboard control.
 
 ## Key Features
 
-- ✅ **B-spline Interpolation**: Smooth trajectory generation from discrete waypoints
+- ✅ **Second-Order Filter**: Smooth trajectory generation with physical constraints
 - ✅ **Continuous Tracking**: Sequential waypoint following without stopping
 - ✅ **Dynamic Path Management**: New paths immediately replace previous ones
 - ✅ **PX4 Integration**: Standard interface using px4_msgs
 - ✅ **Auto-heading**: Yaw automatically calculated from movement direction
 - ✅ **Offboard Control**: Automatic offboard mode activation
 - ✅ **Auto-arm/disarm**: Intelligent arming based on flight state
-- ✅ **Velocity Control**: Configurable velocity profiles
+- ✅ **Velocity Control**: Configurable velocity profiles with acceleration limits
 
 ## Architecture
 
@@ -28,7 +28,7 @@ traj_interp/
 ├── include/traj_interp/
 │   ├── trajectory_interpolator.hpp   # Node header  
 │   ├── frame_transforms.h           # Transform utilities
-│   ├── planner_spline.h             # B-spline interpolation
+│   ├── planner_spline.h             # Second-order filter implementation
 │   ├── planner.h                    # Base planner interface
 │   ├── utils.h                      # General utilities
 │   └── matrix/                      # Math matrix library
@@ -69,14 +69,15 @@ traj_interp/
 ```yaml
 trajectory_interpolator:
   ros__parameters:
-    # Interpolation
-    max_velocity: 2.0          # Maximum velocity (m/s)
-    max_acceleration: 1.0      # Maximum acceleration (m/s²)
-    interpolation_rate: 50.0   # Control loop frequency (Hz)
+    # Physical Constraints
+    ref_vel_max: 2.0          # Maximum velocity (m/s)
+    ref_acc_max: 1.0          # Maximum acceleration (m/s²)
+    ref_jerk_max: 2.0         # Maximum jerk (m/s³)
     
-    # B-spline Parameters  
-    spline_order: 3           # B-spline order (3 = cubic)
-    smoothing_factor: 0.1     # Trajectory smoothing
+    # Second-Order Filter Parameters
+    ref_omega: 1.0            # Natural frequency ω (rad/s)
+    ref_zeta: 0.7             # Damping ratio ζ
+    control_frequency: 50.0   # Control loop frequency (Hz)
     
     # Auto Control
     auto_arm: true            # Auto-arm on first trajectory
@@ -84,25 +85,30 @@ trajectory_interpolator:
     auto_offboard: true       # Auto-offboard mode
     
     # Safety
-    position_tolerance: 0.2   # Goal reach tolerance (m)
+    waypoint_tolerance: 0.2   # Goal reach tolerance (m)
     velocity_timeout: 10.0    # Velocity timeout (s)
 ```
 
 ## Algorithms
 
-### B-spline Interpolation
-The system uses cubic B-splines for smooth trajectory generation:
+### Second-Order Filter Interpolation
+The system uses a second-order filter adapted from the lee_controller for smooth trajectory generation:
 
 ```cpp
-// Cubic B-spline interpolation with velocity constraints
-SplineTrajectory spline = generateBSpline(waypoints, max_velocity, max_acceleration);
+// Second-order filter with physical constraints
+acceleration = ω² × position_error - 2ζω × velocity
 ```
 
+**Mathematical Model**:
+- **Natural Frequency (ω)**: Controls response speed
+- **Damping Ratio (ζ)**: Controls oscillation (ζ=0.7 for optimal response)
+- **Physical Limits**: Enforces max velocity, acceleration, and jerk
+
 **Benefits**:
-- Smooth C² continuous trajectories
-- Velocity and acceleration constraints
-- Automatic heading calculation
-- Real-time trajectory updates
+- Smooth trajectories with physical constraints
+- No overshoot with proper damping
+- Real-time computation efficiency
+- Automatic velocity and acceleration limiting
 
 ### PX4 Integration
 - **Offboard Mode**: Automatic activation on trajectory start
@@ -130,7 +136,8 @@ ros2 launch traj_interp trajectory_interpolator.launch.py
 ```bash
 ros2 launch traj_interp trajectory_interpolator.launch.py \
   config_file:=config/trajectory_interpolator.yaml \
-  max_velocity:=1.5 \
+  ref_vel_max:=1.5 \
+  ref_omega:=1.2 \
   auto_arm:=true
 ```
 
@@ -169,9 +176,10 @@ ros2 topic pub /trajectory_path nav_msgs/Path '{
 - Check interpolator status: `ros2 topic echo /trajectory_interpolator/status`
 
 ### Jerky Movement
-- Reduce `max_velocity` parameter
-- Increase `smoothing_factor`
-- Check `interpolation_rate` (should be ≥50Hz)
+- Reduce `ref_vel_max` parameter
+- Increase `ref_zeta` (damping ratio) for smoother response
+- Decrease `ref_omega` (natural frequency) for slower response
+- Check `control_frequency` (should be ≥50Hz)
 
 ### Auto-arm Issues
 - Ensure drone is in position mode first
@@ -182,9 +190,9 @@ ros2 topic pub /trajectory_path nav_msgs/Path '{
 
 **Typical Performance**:
 - Control Rate: 50Hz
-- Trajectory Smoothness: C² continuous
+- Filter Response: Second-order with configurable damping
 - Position Accuracy: ±10cm
-- Velocity Control: Configurable 0.5-5.0 m/s
+- Velocity Control: Configurable 0.5-5.0 m/s with acceleration limits
 
 ## Build
 
@@ -211,6 +219,7 @@ source install/setup.bash
 - **Memory Efficient**: Minimal dynamic allocation during flight
 - **Thread Safe**: Proper mutex protection for shared state
 - **PX4 Compatible**: Follows PX4 offboard control standards
+- **Filter Tuning**: Adjustable ω and ζ parameters for different flight characteristics
 
 ## 🔧 Node States
 
@@ -233,12 +242,25 @@ ros2 topic echo /trajectory_path
 
 ## 🔄 Second-Order Filter
 
-The algorithm enforces physical limitations for:
-- **Jerk** (rate of change of acceleration)
-- **Acceleration**
-- **Velocity**
+The algorithm enforces physical limitations using a second-order filter adapted from lee_controller:
 
-Using a second-order filter:
+**Mathematical Foundation**:
 ```
-acceleration = ω² × error - 2ζω × velocity
+acceleration = ω² × (target_position - current_position) - 2ζω × current_velocity
 ```
+
+**Physical Constraints**:
+- **Jerk** (rate of change of acceleration): `ref_jerk_max`
+- **Acceleration**: `ref_acc_max`
+- **Velocity**: `ref_vel_max`
+
+**Filter Parameters**:
+- **ω (omega)**: Natural frequency - controls response speed
+- **ζ (zeta)**: Damping ratio - controls oscillation (0.7 = critically damped)
+
+**Tuning Guidelines**:
+- Higher ω → Faster response, more aggressive
+- Lower ω → Slower response, smoother
+- ζ = 0.7 → Optimal balance (no overshoot)
+- ζ < 0.7 → Oscillatory behavior
+- ζ > 0.7 → Sluggish response
