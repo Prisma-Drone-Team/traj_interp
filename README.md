@@ -87,6 +87,7 @@ trajectory_interpolator:
     # Safety
     waypoint_tolerance: 0.2   # Goal reach tolerance (m)
     velocity_timeout: 10.0    # Velocity timeout (s)
+    vertical_movement_threshold: 0.2  # Threshold to detect takeoff/landing movements
 ```
 
 ## Algorithms
@@ -185,6 +186,12 @@ ros2 topic pub /trajectory_path nav_msgs/Path '{
 - Ensure drone is in position mode first
 - Check `auto_arm: true` in configuration
 - Verify vehicle status topic connectivity
+
+### Takeoff Rotation Issues
+- If drone rotates during takeoff, check `vertical_movement_threshold` parameter
+- Default value `0.2` means horizontal movement must be >20% of vertical movement for yaw change
+- Increase value (e.g., `0.5`) to make system more sensitive to vertical movements
+- Decrease value (e.g., `0.1`) to make system less sensitive
 
 ## Performance
 

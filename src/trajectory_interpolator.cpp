@@ -63,6 +63,9 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("yaw_tolerance", 0.1);
     _yaw_tolerance = this->get_parameter("yaw_tolerance").as_double();
     
+    this->declare_parameter("vertical_movement_threshold", 0.2);
+    _vertical_movement_threshold = this->get_parameter("vertical_movement_threshold").as_double();
+    
     // TF parameters (like trajectory_planner)
     this->declare_parameter("parent_transform", "map");
     _parent_transf = this->get_parameter("parent_transform").as_string();
@@ -172,8 +175,15 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
             _current_target.pose.position.z
         );
         
-        // Calculate heading direction automatically from current position to target
-        float target_yaw = calculate_heading_yaw(_current_position, target_pos);
+        // For single waypoint paths (like takeoff), maintain current yaw
+        // For multi-waypoint paths, calculate heading direction
+        float target_yaw;
+        if (resampled_poses.size() == 1) {
+            target_yaw = _ref_yaw;  // Maintain current yaw for single waypoint (takeoff/landing)
+            RCLCPP_INFO(get_logger(), "Single waypoint detected - maintaining current yaw: %.3f", target_yaw);
+        } else {
+            target_yaw = calculate_heading_yaw(_current_position, target_pos);
+        }
         
         set_new_target(target_pos, target_yaw);
         _state = FOLLOWING_TRAJECTORY;
@@ -542,9 +552,24 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
     // Calculate direction vector from current to target position
     Eigen::Vector3f direction = target_pos - current_pos;
     
-    // Calculate yaw angle from direction vector (only considering X-Y plane)
+    // Calculate horizontal distance (X-Y plane)
+    float horizontal_distance = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
+    float vertical_distance = std::abs(direction.z());
+    
+    // If movement is predominantly vertical (takeoff/landing), maintain current yaw
+    // Threshold: if horizontal movement is less than threshold * vertical movement, consider it vertical
+    if (horizontal_distance < _vertical_movement_threshold * vertical_distance) {
+        RCLCPP_INFO(get_logger(), "Vertical movement detected (h: %.3f, v: %.3f) - maintaining current yaw: %.3f", 
+                   horizontal_distance, vertical_distance, _ref_yaw);
+        return _ref_yaw;  // Maintain current yaw for vertical movements
+    }
+    
+    // For horizontal movements, calculate yaw angle from direction vector (only considering X-Y plane)
     // atan2(y, x) gives angle from positive X-axis to direction vector
     float yaw = std::atan2(direction.y(), direction.x());
+    
+    RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
+               horizontal_distance, vertical_distance, yaw);
     
     return yaw;
 }

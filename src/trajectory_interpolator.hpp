@@ -151,6 +151,7 @@ private:
     // Waypoint following
     double _waypoint_tolerance{0.1};  // Distance tolerance to consider waypoint reached [m]
     double _yaw_tolerance{0.1};       // Yaw tolerance [rad]
+    double _vertical_movement_threshold{0.2};  // Threshold to detect vertical movements (takeoff/landing)
     
     // TF2 for coordinate transformations
     std::shared_ptr<tf2_ros::Buffer> _tf_buffer;
