@@ -11,17 +11,17 @@ trajectory_interpolator:
     trajectory_setpoint_topic: "/px4/trajectory_setpoint_enu"
     status_topic: "/trajectory_interpolator/status"
     
-    # Filter parameters for trajectory interpolation (ffilter) - conservative tuning
-    ref_jerk_max: 1.0          # Maximum jerk [m/s³] - reduced for smoother motion
-    ref_acc_max: 0.5           # Maximum acceleration [m/s²] - reduced for gentler acceleration
+    # Filter parameters for trajectory interpolation (ffilter) - linear trajectory tuning
+    ref_jerk_max: 0.5          # Maximum jerk [m/s³] - further reduced for very linear motion
+    ref_acc_max: 0.3           # Maximum acceleration [m/s²] - reduced for gentler acceleration
     ref_vel_max: 0.5           # Maximum velocity [m/s] - as requested
-    ref_omega: 0.8             # Filter frequency [rad/s] - less responsive for smoother motion
-    ref_zeta: 0.9              # Damping ratio - higher for less overshoot
+    ref_omega: 1.2             # Filter frequency [rad/s] - higher for more responsive but still smooth
+    ref_zeta: 1.0              # Damping ratio - critical damping for linear response
     
-    # Yaw filter parameters - also made less aggressive
-    ref_yaw_jerk_max: 0.8      # Maximum yaw jerk [rad/s³] - reduced
-    ref_yaw_acc_max: 0.4       # Maximum yaw acceleration [rad/s²] - reduced
-    ref_yaw_vel_max: 0.4       # Maximum yaw velocity [rad/s] - reduced
+    # Yaw filter parameters - prioritized for forward-looking drone
+    ref_yaw_jerk_max: 2.0      # Maximum yaw jerk [rad/s³] - increased for quick orientation
+    ref_yaw_acc_max: 1.5       # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
+    ref_yaw_vel_max: 1.0       # Maximum yaw velocity [rad/s] - increased for fast reorientation
     
     # Control parameters
     control_frequency: 50.0    # Control loop frequency [Hz]

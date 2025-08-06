@@ -90,6 +90,7 @@ private:
     void clear_waypoint_queue();
     geometry_msgs::msg::PoseStamped transform_pose_to_odom(const geometry_msgs::msg::PoseStamped& pose_in_map);
     void tf_lookup_loop();
+    std::vector<geometry_msgs::msg::PoseStamped> resample_path(const std::vector<geometry_msgs::msg::PoseStamped>& original_path, double sampling_distance = 0.4);
     
     // Utility functions
     void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0, float param3 = 0.0);

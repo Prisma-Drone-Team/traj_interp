@@ -143,9 +143,12 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     clear_waypoint_queue();
     _has_target = false;
     
+    // Resample the path to have more waypoints (every 40cm)
+    std::vector<geometry_msgs::msg::PoseStamped> resampled_poses = resample_path(msg->poses, 0.4);
+    
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
-        for (const auto& pose : msg->poses) {
+        for (const auto& pose : resampled_poses) {
             // Transform each waypoint from map to odom frame
             geometry_msgs::msg::PoseStamped transformed_pose = transform_pose_to_odom(pose);
             if (transformed_pose.header.frame_id != "") {  // Check if transformation was successful
@@ -661,6 +664,73 @@ void TrajectoryInterpolator::tf_lookup_loop() {
         }
         rate.sleep();
     }
+}
+
+std::vector<geometry_msgs::msg::PoseStamped> TrajectoryInterpolator::resample_path(
+    const std::vector<geometry_msgs::msg::PoseStamped>& original_path, double sampling_distance) {
+    
+    if (original_path.empty()) {
+        return {};
+    }
+    
+    if (original_path.size() == 1) {
+        return original_path;  // Single waypoint, nothing to resample
+    }
+    
+    std::vector<geometry_msgs::msg::PoseStamped> resampled_path;
+    
+    // Always include the first waypoint
+    resampled_path.push_back(original_path[0]);
+    
+    for (size_t i = 0; i < original_path.size() - 1; i++) {
+        const auto& current_pose = original_path[i];
+        const auto& next_pose = original_path[i + 1];
+        
+        // Calculate distance between current and next waypoint
+        double dx = next_pose.pose.position.x - current_pose.pose.position.x;
+        double dy = next_pose.pose.position.y - current_pose.pose.position.y;
+        double dz = next_pose.pose.position.z - current_pose.pose.position.z;
+        double segment_length = std::sqrt(dx*dx + dy*dy + dz*dz);
+        
+        if (segment_length <= sampling_distance) {
+            // Segment is short enough, no need to subdivide
+            continue;
+        }
+        
+        // Calculate number of intermediate waypoints needed
+        int num_segments = static_cast<int>(std::ceil(segment_length / sampling_distance));
+        double actual_step = segment_length / num_segments;
+        
+        // Generate intermediate waypoints
+        for (int j = 1; j < num_segments; j++) {
+            geometry_msgs::msg::PoseStamped intermediate_pose;
+            intermediate_pose.header = current_pose.header;
+            
+            double ratio = (j * actual_step) / segment_length;
+            
+            // Linear interpolation of position
+            intermediate_pose.pose.position.x = current_pose.pose.position.x + ratio * dx;
+            intermediate_pose.pose.position.y = current_pose.pose.position.y + ratio * dy;
+            intermediate_pose.pose.position.z = current_pose.pose.position.z + ratio * dz;
+            
+            // SLERP interpolation for orientation
+            tf2::Quaternion q1, q2, q_interpolated;
+            tf2::fromMsg(current_pose.pose.orientation, q1);
+            tf2::fromMsg(next_pose.pose.orientation, q2);
+            q_interpolated = q1.slerp(q2, ratio);
+            intermediate_pose.pose.orientation = tf2::toMsg(q_interpolated);
+            
+            resampled_path.push_back(intermediate_pose);
+        }
+    }
+    
+    // Always include the last waypoint
+    resampled_path.push_back(original_path.back());
+    
+    RCLCPP_INFO(get_logger(), "Resampled path: %zu → %zu waypoints (sampling distance: %.2f m)", 
+                original_path.size(), resampled_path.size(), sampling_distance);
+    
+    return resampled_path;
 }
 
 int main(int argc, char* argv[]) {
