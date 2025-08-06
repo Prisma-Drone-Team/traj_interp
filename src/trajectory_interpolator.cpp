@@ -242,7 +242,7 @@ void TrajectoryInterpolator::control_timer_callback() {
     }
     
     // Always publish offboard control mode to maintain offboard
-    publish_offboard_control_mode();
+    // publish_offboard_control_mode();
     
     // Increment setpoint counter
     _offboard_setpoint_counter++;
@@ -527,16 +527,16 @@ void TrajectoryInterpolator::publish_trajectory_setpoint() {
     _trajectory_setpoint_publisher->publish(msg);
 }
 
-void TrajectoryInterpolator::publish_offboard_control_mode() {
-    OffboardControlMode msg{};
-    msg.position = true;
-    msg.velocity = false;
-    msg.acceleration = false;
-    msg.attitude = false;
-    msg.body_rate = false;
-    msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-    _offboard_control_mode_publisher->publish(msg);
-}
+// void TrajectoryInterpolator::publish_offboard_control_mode() {
+//     OffboardControlMode msg{};
+//     msg.position = true;
+//     msg.velocity = false;
+//     msg.acceleration = false;
+//     msg.attitude = false;
+//     msg.body_rate = false;
+//     msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+//     _offboard_control_mode_publisher->publish(msg);
+// }
 
 float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& current_pos, const Eigen::Vector3f& target_pos) {
     // Calculate direction vector from current to target position
