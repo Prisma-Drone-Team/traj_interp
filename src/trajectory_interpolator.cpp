@@ -63,6 +63,22 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("yaw_tolerance", 0.1);
     _yaw_tolerance = this->get_parameter("yaw_tolerance").as_double();
     
+    // TF parameters (like trajectory_planner)
+    this->declare_parameter("parent_transform", "map");
+    _parent_transf = this->get_parameter("parent_transform").as_string();
+    
+    this->declare_parameter("child_transform", "odom");
+    _child_transf = this->get_parameter("child_transform").as_string();
+    
+    this->declare_parameter("do_transform", true);
+    _do_transform = this->get_parameter("do_transform").as_bool();
+    
+    this->declare_parameter("tf_buffer_timeout", 0.5);
+    _tf_buffer_timeout = this->get_parameter("tf_buffer_timeout").as_double();
+    
+    RCLCPP_INFO(get_logger(), "TF: %s -> %s, do_transform: %s", 
+                _parent_transf.c_str(), _child_transf.c_str(), _do_transform ? "true" : "false");
+    
     // Initialize publishers
     _offboard_control_mode_publisher = this->create_publisher<OffboardControlMode>(_offboard_control_mode_topic, 10);
     _vehicle_command_publisher = this->create_publisher<VehicleCommand>(_vehicle_command_topic, 10);
@@ -95,6 +111,14 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _status_timer = this->create_wall_timer(
         1s, std::bind(&TrajectoryInterpolator::status_timer_callback, this));
     
+    // Initialize TF2
+    _tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+    _tf_listener = std::make_shared<tf2_ros::TransformListener>(*_tf_buffer);
+    
+    // Start TF lookup thread (like trajectory_planner)
+    std::thread tf_thread(&TrajectoryInterpolator::tf_lookup_loop, this);
+    tf_thread.detach();
+    
     // Initialize reference values
     _ref_position.setZero();
     _ref_velocity.setZero();
@@ -108,22 +132,32 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     RCLCPP_INFO(get_logger(), "Received new path with %zu waypoints", msg->poses.size());
     
     if (msg->poses.empty()) {
-        RCLCPP_WARN(get_logger(), "Received empty path, ignoring");
+        RCLCPP_WARN(get_logger(), "Received empty path, stopping trajectory");
+        _state = STOPPED;
+        clear_waypoint_queue();
+        _has_target = false;
         return;
     }
     
-    // Clear current waypoint queue and add new waypoints
+    // Always clear current waypoint queue and reset state for new path
     clear_waypoint_queue();
+    _has_target = false;
     
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
         for (const auto& pose : msg->poses) {
-            _waypoint_queue.push(pose);
+            // Transform each waypoint from map to odom frame
+            geometry_msgs::msg::PoseStamped transformed_pose = transform_pose_to_odom(pose);
+            if (transformed_pose.header.frame_id != "") {  // Check if transformation was successful
+                _waypoint_queue.push(transformed_pose);
+            } else {
+                RCLCPP_WARN(get_logger(), "Failed to transform waypoint from map to odom, skipping");
+            }
         }
     }
     
-    // Set the first waypoint as target - start trajectory after clearing queue or if IDLE
-    if ((_state == IDLE || _state == STOPPED) && !_waypoint_queue.empty()) {
+    // Always start trajectory with first waypoint (regardless of current state)
+    if (!_waypoint_queue.empty()) {
         std::lock_guard<std::mutex> lock(_queue_mutex);
         _current_target = _waypoint_queue.front();
         _waypoint_queue.pop();
@@ -141,23 +175,28 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         set_new_target(target_pos, target_yaw);
         _state = FOLLOWING_TRAJECTORY;
         
-        // Reset offboard setpoint counter when starting new trajectory
-        _offboard_setpoint_counter = 0;
+        // Solo resettare il contatore se non siamo armati per evitare loop infiniti
+        if (!_armed) {
+            _offboard_setpoint_counter = 0;
+            RCLCPP_INFO(get_logger(), "Starting new trajectory (resetting counter for unarmed drone)");
+        } else {
+            RCLCPP_INFO(get_logger(), "Starting new trajectory (maintaining counter for armed drone)");
+        }
         
         // Engage offboard mode immediately when starting trajectory (in case not already)
         if (!_offboard_mode) {
             RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
             engage_offboard_mode();
         }
+    } else {
+        RCLCPP_ERROR(get_logger(), "No valid waypoints after transformation, cannot start trajectory");
+        _state = STOPPED;
+    }
         
-        // Mark that we received the first path (for arming logic)
-        if (!_first_path_received) {
-            _first_path_received = true;
-            RCLCPP_INFO(get_logger(), "First path received - arming will be enabled");
-        }
-        
-        RCLCPP_INFO(get_logger(), "Started following trajectory to waypoint: [%.3f, %.3f, %.3f], yaw: %.3f", 
-                   target_pos(0), target_pos(1), target_pos(2), target_yaw);
+    // Mark that we received the first path (for arming logic)
+    if (!_first_path_received) {
+        _first_path_received = true;
+        RCLCPP_INFO(get_logger(), "First path received - arming will be enabled");
     }
 }
 
@@ -236,45 +275,72 @@ void TrajectoryInterpolator::control_timer_callback() {
     // Note: Auto-disarm logic is handled in land_detected_callback
     // when actual landing is detected during flight
     
-    // Check if current waypoint is reached
+    // Check if we should advance to next waypoint (at half distance, not full reach)
     if (_has_target && _state == FOLLOWING_TRAJECTORY) {
         Eigen::Vector3f error = _cmd_position - _ref_position;
         float distance_error = error.norm();
         
-        float yaw_error = std::abs(_cmd_yaw - _ref_yaw);
-        if (yaw_error > M_PI) {
-            yaw_error = 2.0f * M_PI - yaw_error;
+        // Calculate distance to target for smooth transition logic
+        Eigen::Vector3f target_error = _cmd_position - _current_position;
+        float distance_to_target = target_error.norm();
+        
+        // Check if we have next waypoint in queue and we're at ~half distance
+        bool should_advance_waypoint = false;
+        {
+            std::lock_guard<std::mutex> lock(_queue_mutex);
+            if (!_waypoint_queue.empty() && distance_to_target <= _waypoint_tolerance * 2.0) {
+                should_advance_waypoint = true;
+            }
         }
         
-        if (distance_error < _waypoint_tolerance && yaw_error < _yaw_tolerance) {
-            RCLCPP_INFO(get_logger(), "Reached waypoint [%.3f, %.3f, %.3f]", 
-                       _cmd_position(0), _cmd_position(1), _cmd_position(2));
-            
-            // Get next waypoint from queue
+        // Advance to next waypoint when at half distance (for continuous flow)
+        if (should_advance_waypoint) {
             std::lock_guard<std::mutex> lock(_queue_mutex);
             if (!_waypoint_queue.empty()) {
                 _current_target = _waypoint_queue.front();
                 _waypoint_queue.pop();
                 
-                Eigen::Vector3f target_pos(
-                    _current_target.pose.position.x,
-                    _current_target.pose.position.y,
-                    _current_target.pose.position.z
-                );
-                
-                // Calculate heading direction automatically from current reference position to target
-                float target_yaw = calculate_heading_yaw(_ref_position, target_pos);
-                
-                set_new_target(target_pos, target_yaw);
-                
-                RCLCPP_INFO(get_logger(), "Moving to next waypoint: [%.3f, %.3f, %.3f], yaw: %.3f", 
-                           target_pos(0), target_pos(1), target_pos(2), target_yaw);
-            } else {
-                // No more waypoints, trajectory completed
-                _has_target = false;
-                _state = IDLE;
-                RCLCPP_INFO(get_logger(), "Trajectory completed");
+                // Transform the new waypoint with latest TF
+                geometry_msgs::msg::PoseStamped transformed_target = transform_pose_to_odom(_current_target);
+                if (transformed_target.header.frame_id != "") {
+                    // Update target with transformed coordinates
+                    Eigen::Vector3f target_pos(
+                        transformed_target.pose.position.x,
+                        transformed_target.pose.position.y,
+                        transformed_target.pose.position.z
+                    );
+                    
+                    // Calculate heading direction automatically from current reference position to target
+                    float target_yaw = calculate_heading_yaw(_ref_position, target_pos);
+                    
+                    set_new_target(target_pos, target_yaw);
+                    
+                    RCLCPP_INFO(get_logger(), "Advanced to next waypoint (at half distance): [%.3f, %.3f, %.3f], yaw: %.3f", 
+                               target_pos(0), target_pos(1), target_pos(2), target_yaw);
+                } else {
+                    RCLCPP_WARN(get_logger(), "Failed to transform next waypoint, skipping");
+                }
             }
+        }
+        
+        // Only check for final completion when no more waypoints and close to last target
+        float yaw_error = std::abs(_cmd_yaw - _ref_yaw);
+        if (yaw_error > M_PI) {
+            yaw_error = 2.0f * M_PI - yaw_error;
+        }
+        
+        bool queue_empty = false;
+        {
+            std::lock_guard<std::mutex> lock(_queue_mutex);
+            queue_empty = _waypoint_queue.empty();
+        }
+        
+        // Complete trajectory only when no more waypoints AND very close to final target
+        if (queue_empty && distance_error < _waypoint_tolerance && yaw_error < _yaw_tolerance) {
+            _has_target = false;
+            _state = IDLE;
+            RCLCPP_INFO(get_logger(), "Trajectory completed - reached final waypoint [%.3f, %.3f, %.3f]", 
+                       _cmd_position(0), _cmd_position(1), _cmd_position(2));
         }
     }
 }
@@ -394,9 +460,13 @@ void TrajectoryInterpolator::clear_waypoint_queue() {
         _cmd_position = _ref_position;
         _cmd_yaw = _ref_yaw;
         _has_target = false;
-        // Reset offboard counter for new trajectory
-        _offboard_setpoint_counter = 0;
-        RCLCPP_INFO(get_logger(), "Trajectory stopped, new path received");
+        // Solo azzerare il contatore se non siamo armati - evita loop infiniti
+        if (!_armed) {
+            _offboard_setpoint_counter = 0;
+            RCLCPP_INFO(get_logger(), "Trajectory stopped, new path received (resetting counter)");
+        } else {
+            RCLCPP_INFO(get_logger(), "Trajectory stopped, new path received (maintaining counter for armed drone)");
+        }
     }
 }
 
@@ -528,6 +598,69 @@ void TrajectoryInterpolator::disarm() {
 void TrajectoryInterpolator::engage_offboard_mode() {
     publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
     RCLCPP_INFO(get_logger(), "Switching to offboard mode");
+}
+
+geometry_msgs::msg::PoseStamped TrajectoryInterpolator::transform_pose_to_odom(const geometry_msgs::msg::PoseStamped& pose_in_map) {
+    geometry_msgs::msg::PoseStamped transformed_pose = pose_in_map;  // Copy input
+    
+    if (_do_transform) {
+        try {
+            // Transform position using tf2::doTransform like trajectory_planner
+            geometry_msgs::msg::PointStamped point_in, point_out;
+            point_in.header.stamp = this->get_clock()->now();
+            point_in.header.frame_id = _parent_transf;  // "map"
+            point_in.point.x = pose_in_map.pose.position.x;
+            point_in.point.y = pose_in_map.pose.position.y;
+            point_in.point.z = pose_in_map.pose.position.z;
+            
+            tf2::doTransform(point_in, point_out, _tf_map_to_odom);
+            
+            // Update the transformed pose
+            transformed_pose.header.frame_id = _child_transf;  // "odom"
+            transformed_pose.header.stamp = this->get_clock()->now();
+            transformed_pose.pose.position.x = point_out.point.x;
+            transformed_pose.pose.position.y = point_out.point.y;
+            transformed_pose.pose.position.z = point_out.point.z;
+            
+            RCLCPP_INFO(get_logger(), "Transformed waypoint from [%.3f, %.3f, %.3f] in %s to [%.3f, %.3f, %.3f] in %s",
+                        pose_in_map.pose.position.x, pose_in_map.pose.position.y, pose_in_map.pose.position.z,
+                        _parent_transf.c_str(),
+                        transformed_pose.pose.position.x, transformed_pose.pose.position.y, transformed_pose.pose.position.z,
+                        _child_transf.c_str());
+                        
+        } catch (const tf2::TransformException& ex) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *this->get_clock(), 1000, 
+                                 "Transform failed: %s", ex.what());
+            transformed_pose.header.frame_id = "";  // Mark as failed
+        }
+    } else {
+        // No transform, just change frame_id to odom
+        transformed_pose = pose_in_map;  // Copy the entire pose
+        transformed_pose.header.frame_id = _child_transf;
+        transformed_pose.header.stamp = this->get_clock()->now();
+        RCLCPP_INFO(get_logger(), "Transform disabled, using pose as-is in %s frame: [%.3f, %.3f, %.3f]",
+                    _child_transf.c_str(),
+                    transformed_pose.pose.position.x, transformed_pose.pose.position.y, transformed_pose.pose.position.z);
+    }
+    
+    return transformed_pose;
+}
+
+void TrajectoryInterpolator::tf_lookup_loop() {
+    RCLCPP_INFO(get_logger(), "TF lookup thread started");
+    
+    rclcpp::Rate rate(100);  // 100 Hz like trajectory_planner
+    while (rclcpp::ok()) {
+        try {
+            rclcpp::Time now = this->get_clock()->now();
+            rclcpp::Duration timeout = rclcpp::Duration::from_seconds(_tf_buffer_timeout);
+            _tf_map_to_odom = _tf_buffer->lookupTransform(_child_transf, _parent_transf, now, timeout);
+            _tf_odom_to_map = _tf_buffer->lookupTransform(_parent_transf, _child_transf, now, timeout);
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *this->get_clock(), 5000, "Transform error: %s", ex.what());
+        }
+        rate.sleep();
+    }
 }
 
 int main(int argc, char* argv[]) {

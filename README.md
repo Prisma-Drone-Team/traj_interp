@@ -32,24 +32,24 @@ ros2 launch traj_interp trajectory_interpolator.launch.py
 ```bash
 # Square Path
 ros2 topic pub /trajectory_path nav_msgs/Path '{
-    header: {frame_id: "odom"},
+    header: {frame_id: "map"},
     poses: [
-        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
+        {header: {frame_id: "map"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 2.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 0.0, y: 2.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
     ]
 }' --once
 
 # Linear Path
 ros2 topic pub /trajectory_path nav_msgs/Path '{
-    header: {frame_id: "odom"},
+    header: {frame_id: "map"},
     poses: [
-        {header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 1.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
-        {header: {frame_id: "odom"}, pose: {position: {x: 3.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
+        {header: {frame_id: "map"}, pose: {position: {x: 0.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 1.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 2.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}},
+        {header: {frame_id: "map"}, pose: {position: {x: 3.0, y: 0.0, z: 5.0}, orientation: {w: 1.0}}}
     ]
 }' --once
 ```

@@ -17,6 +17,7 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 # Trajectory Interpolator node
 add_executable(trajectory_interpolator src/trajectory_interpolator.cpp)
@@ -27,6 +28,9 @@ ament_target_dependencies(trajectory_interpolator
   nav_msgs 
   std_msgs 
   trajectory_msgs 
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
   Eigen3
   tf2
   tf2_geometry_msgs

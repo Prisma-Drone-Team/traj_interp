@@ -16,6 +16,8 @@
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 // Utility function to extract yaw from quaternion
 float quaternion_to_yaw(const Eigen::Quaternionf& q) {
@@ -31,6 +33,7 @@ float quaternion_to_yaw(const Eigen::Quaternionf& q) {
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <thread>
 
 using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
@@ -85,6 +88,8 @@ private:
     float calculate_heading_yaw(const Eigen::Vector3f& current_pos, const Eigen::Vector3f& target_pos);
     float extract_yaw_from_quaternion(const Eigen::Quaternionf& q);
     void clear_waypoint_queue();
+    geometry_msgs::msg::PoseStamped transform_pose_to_odom(const geometry_msgs::msg::PoseStamped& pose_in_map);
+    void tf_lookup_loop();
     
     // Utility functions
     void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0, float param3 = 0.0);
@@ -145,6 +150,15 @@ private:
     // Waypoint following
     double _waypoint_tolerance{0.1};  // Distance tolerance to consider waypoint reached [m]
     double _yaw_tolerance{0.1};       // Yaw tolerance [rad]
+    
+    // TF2 for coordinate transformations
+    std::shared_ptr<tf2_ros::Buffer> _tf_buffer;
+    std::shared_ptr<tf2_ros::TransformListener> _tf_listener;
+    geometry_msgs::msg::TransformStamped _tf_map_to_odom, _tf_odom_to_map;
+    std::string _parent_transf{"map"};
+    std::string _child_transf{"odom"};
+    double _do_transform{1.0};
+    double _tf_buffer_timeout{0.5};
     
     // Topic names
     std::string _path_topic;

@@ -1,5 +1,8 @@
 trajectory_interpolator:
   ros__parameters:
+    # Simulation parameters
+    use_sim_time: true
+    
     # Topic names
     path_topic: "/trajectory_path"
     odometry_topic: "/px4/odometry/out"
@@ -24,3 +27,9 @@ trajectory_interpolator:
     control_frequency: 50.0    # Control loop frequency [Hz]
     waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m]
     yaw_tolerance: 0.1         # Yaw tolerance [rad]
+    
+    # TF2 transforms (like trajectory_planner)
+    parent_transform: "map"
+    child_transform: "odom" 
+    do_transform: true         # Enable/disable transform from map to odom
+    tf_buffer_timeout: 0.5     # TF lookup timeout [s]
