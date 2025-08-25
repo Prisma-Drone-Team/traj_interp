@@ -106,6 +106,15 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
         "/fmu/out/vehicle_land_detected", qos,
         std::bind(&TrajectoryInterpolator::land_detected_callback, this, std::placeholders::_1));
     
+    // Teleop coordination subscribers
+    _teleop_active_subscription = this->create_subscription<std_msgs::msg::Bool>(
+        "/move_manager/teleop_active", 10,
+        std::bind(&TrajectoryInterpolator::teleop_active_callback, this, std::placeholders::_1));
+    
+    _velocity_increments_subscription = this->create_subscription<geometry_msgs::msg::Twist>(
+        "/teleop/velocity_increments", 10,
+        std::bind(&TrajectoryInterpolator::velocity_increments_callback, this, std::placeholders::_1));
+
     // Initialize timers
     _control_timer = this->create_wall_timer(
         std::chrono::milliseconds(static_cast<int>(1000.0 / _control_frequency)),
@@ -118,7 +127,7 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     _tf_listener = std::make_shared<tf2_ros::TransformListener>(*_tf_buffer);
     
-    // Start TF lookup thread (like trajectory_planner)
+    // Start TF lookup thread
     std::thread tf_thread(&TrajectoryInterpolator::tf_lookup_loop, this);
     tf_thread.detach();
     
@@ -175,11 +184,11 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
             _current_target.pose.position.z
         );
         
-        // For single waypoint paths (like takeoff), maintain current yaw
+        // For single waypoint paths, maintain current yaw
         // For multi-waypoint paths, calculate heading direction
         float target_yaw;
         if (resampled_poses.size() == 1) {
-            target_yaw = _ref_yaw;  // Maintain current yaw for single waypoint (takeoff/landing)
+            target_yaw = _ref_yaw;
             RCLCPP_INFO(get_logger(), "Single waypoint detected - maintaining current yaw: %.3f", target_yaw);
         } else {
             target_yaw = calculate_heading_yaw(_current_position, target_pos);
@@ -188,7 +197,7 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         set_new_target(target_pos, target_yaw);
         _state = FOLLOWING_TRAJECTORY;
         
-        // Solo resettare il contatore se non siamo armati per evitare loop infiniti
+        // Reset counter only if not armed to avoid infinite loops
         if (!_armed) {
             _offboard_setpoint_counter = 0;
             RCLCPP_INFO(get_logger(), "Starting new trajectory (resetting counter for unarmed drone)");
@@ -196,7 +205,7 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
             RCLCPP_INFO(get_logger(), "Starting new trajectory (maintaining counter for armed drone)");
         }
         
-        // Engage offboard mode immediately when starting trajectory (in case not already)
+        // Engage offboard mode immediately when starting trajectory
         if (!_offboard_mode) {
             RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
             engage_offboard_mode();
@@ -206,7 +215,7 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         _state = STOPPED;
     }
         
-    // Mark that we received the first path (for arming logic)
+    // Mark that we received the first path
     if (!_first_path_received) {
         _first_path_received = true;
         RCLCPP_INFO(get_logger(), "First path received - arming will be enabled");
@@ -235,7 +244,7 @@ void TrajectoryInterpolator::odometry_callback(const nav_msgs::msg::Odometry::Sh
         _cmd_yaw = _ref_yaw;
         _first_odom_received = true;
         
-        // Engage offboard mode immediately at startup (without arming)
+        // Engage offboard mode immediately at startup
         if (!_offboard_mode) {
             RCLCPP_INFO(get_logger(), "Engaging offboard mode at startup");
             engage_offboard_mode();
@@ -251,28 +260,30 @@ void TrajectoryInterpolator::control_timer_callback() {
         return;
     }
     
-    // Always publish offboard control mode to maintain offboard
-    // publish_offboard_control_mode();
-    
-    // Increment setpoint counter
     _offboard_setpoint_counter++;
     
-    // Only proceed with trajectory interpolation and trajectory setpoint if we have a target
+    // Handle teleop mode
+    if (_teleop_active) {
+        handle_teleop_mode();
+        return;
+    }
+    
+    // Trajectory interpolation if we have a target and not stopped
     if (_has_target && _state == FOLLOWING_TRAJECTORY) {
-        // Interpolate trajectory using ffilter algorithm
         interpolate_trajectory();
-        
-        // Publish trajectory setpoint
+        publish_trajectory_setpoint();
+    } else if (_state == STOPPED && !_teleop_active) {
+        // If stopped and not in teleop, maintain current position
+        _cmd_position = _current_position;
+        _ref_velocity = Eigen::Vector3f::Zero();
+        _ref_acceleration = Eigen::Vector3f::Zero();
         publish_trajectory_setpoint();
     } else {
         // Publish current position as setpoint to maintain stability
         publish_trajectory_setpoint();
     }
     
-    // Auto-arm when:
-    // 1. First path ever received (initial mission), OR
-    // 2. Drone is landed and new trajectory started (new mission after landing)
-    // This ensures arming happens for first mission and any new mission after landing
+    // Auto-arm when trajectory starts and drone is landed
     if (_has_target && _state == FOLLOWING_TRAJECTORY && !_armed && _landed && 
         _offboard_setpoint_counter > OFFBOARD_SETPOINTS_REQUIRED && 
         (_first_path_received || _landed)) {
@@ -285,19 +296,15 @@ void TrajectoryInterpolator::control_timer_callback() {
         arm();
     }
     
-    // Note: Auto-disarm logic is handled in land_detected_callback
-    // when actual landing is detected during flight
-    
-    // Check if we should advance to next waypoint (at half distance, not full reach)
+    // Check if we should advance to next waypoint
     if (_has_target && _state == FOLLOWING_TRAJECTORY) {
         Eigen::Vector3f error = _cmd_position - _ref_position;
         float distance_error = error.norm();
         
-        // Calculate distance to target for smooth transition logic
         Eigen::Vector3f target_error = _cmd_position - _current_position;
         float distance_to_target = target_error.norm();
         
-        // Check if we have next waypoint in queue and we're at ~half distance
+        // Check if we have next waypoint in queue and we're at half distance
         bool should_advance_waypoint = false;
         {
             std::lock_guard<std::mutex> lock(_queue_mutex);
@@ -306,7 +313,7 @@ void TrajectoryInterpolator::control_timer_callback() {
             }
         }
         
-        // Advance to next waypoint when at half distance (for continuous flow)
+        // Advance to next waypoint when at half distance for continuous flow
         if (should_advance_waypoint) {
             std::lock_guard<std::mutex> lock(_queue_mutex);
             if (!_waypoint_queue.empty()) {
@@ -316,14 +323,12 @@ void TrajectoryInterpolator::control_timer_callback() {
                 // Transform the new waypoint with latest TF
                 geometry_msgs::msg::PoseStamped transformed_target = transform_pose_to_odom(_current_target);
                 if (transformed_target.header.frame_id != "") {
-                    // Update target with transformed coordinates
                     Eigen::Vector3f target_pos(
                         transformed_target.pose.position.x,
                         transformed_target.pose.position.y,
                         transformed_target.pose.position.z
                     );
                     
-                    // Calculate heading direction automatically from current reference position to target
                     float target_yaw = calculate_heading_yaw(_ref_position, target_pos);
                     
                     set_new_target(target_pos, target_yaw);
@@ -336,7 +341,6 @@ void TrajectoryInterpolator::control_timer_callback() {
             }
         }
         
-        // Only check for final completion when no more waypoints and close to last target
         float yaw_error = std::abs(_cmd_yaw - _ref_yaw);
         if (yaw_error > M_PI) {
             yaw_error = 2.0f * M_PI - yaw_error;
@@ -348,7 +352,7 @@ void TrajectoryInterpolator::control_timer_callback() {
             queue_empty = _waypoint_queue.empty();
         }
         
-        // Complete trajectory only when no more waypoints AND very close to final target
+        // Complete trajectory only when no more waypoints and very close to final target
         if (queue_empty && distance_error < _waypoint_tolerance && yaw_error < _yaw_tolerance) {
             _has_target = false;
             _state = IDLE;
@@ -469,11 +473,10 @@ void TrajectoryInterpolator::clear_waypoint_queue() {
     // Stop current trajectory if following one
     if (_state == FOLLOWING_TRAJECTORY) {
         _state = STOPPED;
-        // Set current reference position as command to stop smoothly
         _cmd_position = _ref_position;
         _cmd_yaw = _ref_yaw;
         _has_target = false;
-        // Solo azzerare il contatore se non siamo armati - evita loop infiniti
+        // Reset counter only if not armed to avoid infinite loops
         if (!_armed) {
             _offboard_setpoint_counter = 0;
             RCLCPP_INFO(get_logger(), "Trajectory stopped, new path received (resetting counter)");
@@ -549,23 +552,19 @@ void TrajectoryInterpolator::publish_trajectory_setpoint() {
 // }
 
 float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& current_pos, const Eigen::Vector3f& target_pos) {
-    // Calculate direction vector from current to target position
     Eigen::Vector3f direction = target_pos - current_pos;
     
-    // Calculate horizontal distance (X-Y plane)
     float horizontal_distance = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
     float vertical_distance = std::abs(direction.z());
     
-    // If movement is predominantly vertical (takeoff/landing), maintain current yaw
-    // Threshold: if horizontal movement is less than threshold * vertical movement, consider it vertical
+    // If movement is predominantly vertical, maintain current yaw
     if (horizontal_distance < _vertical_movement_threshold * vertical_distance) {
         RCLCPP_INFO(get_logger(), "Vertical movement detected (h: %.3f, v: %.3f) - maintaining current yaw: %.3f", 
                    horizontal_distance, vertical_distance, _ref_yaw);
-        return _ref_yaw;  // Maintain current yaw for vertical movements
+        return _ref_yaw;
     }
     
-    // For horizontal movements, calculate yaw angle from direction vector (only considering X-Y plane)
-    // atan2(y, x) gives angle from positive X-axis to direction vector
+    // For horizontal movements, calculate yaw angle from direction vector
     float yaw = std::atan2(direction.y(), direction.x());
     
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
@@ -575,11 +574,7 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
 }
 
 float TrajectoryInterpolator::extract_yaw_from_quaternion(const Eigen::Quaternionf& q) {
-    // Extract yaw from quaternion using rotation matrix
-    Eigen::Matrix3f rotation_matrix = q.toRotationMatrix();
-    
-    // Yaw is atan2 of rotation matrix elements (2,1) and (2,2) for Z-Y-X Euler
-    // For a simpler approach, use atan2(2*(qw*qz + qx*qy), 1 - 2*(qy^2 + qz^2))
+    // Extract yaw from quaternion
     float yaw = std::atan2(2.0f * (q.w() * q.z() + q.x() * q.y()), 
                           1.0f - 2.0f * (q.y() * q.y() + q.z() * q.z()));
     
@@ -596,18 +591,16 @@ void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::Vehicle
     bool was_landed = _landed;
     _landed = msg->landed;
     
-    // If drone just landed while armed (was flying), stop trajectory and disarm
+    // If drone just landed while armed, stop trajectory and disarm
     if (_landed && !was_landed && _armed) {
         RCLCPP_INFO(get_logger(), "Landing detected during flight - stopping trajectory and disarming");
         
-        // Stop any active trajectory
         if (_state == FOLLOWING_TRAJECTORY) {
             _state = IDLE;
             _has_target = false;
             clear_waypoint_queue();
         }
         
-        // Auto-disarm after landing
         disarm();
     }
 }
@@ -629,22 +622,20 @@ void TrajectoryInterpolator::engage_offboard_mode() {
 }
 
 geometry_msgs::msg::PoseStamped TrajectoryInterpolator::transform_pose_to_odom(const geometry_msgs::msg::PoseStamped& pose_in_map) {
-    geometry_msgs::msg::PoseStamped transformed_pose = pose_in_map;  // Copy input
+    geometry_msgs::msg::PoseStamped transformed_pose = pose_in_map;
     
     if (_do_transform) {
         try {
-            // Transform position using tf2::doTransform like trajectory_planner
             geometry_msgs::msg::PointStamped point_in, point_out;
             point_in.header.stamp = this->get_clock()->now();
-            point_in.header.frame_id = _parent_transf;  // "map"
+            point_in.header.frame_id = _parent_transf;
             point_in.point.x = pose_in_map.pose.position.x;
             point_in.point.y = pose_in_map.pose.position.y;
             point_in.point.z = pose_in_map.pose.position.z;
             
             tf2::doTransform(point_in, point_out, _tf_map_to_odom);
             
-            // Update the transformed pose
-            transformed_pose.header.frame_id = _child_transf;  // "odom"
+            transformed_pose.header.frame_id = _child_transf;
             transformed_pose.header.stamp = this->get_clock()->now();
             transformed_pose.pose.position.x = point_out.point.x;
             transformed_pose.pose.position.y = point_out.point.y;
@@ -659,11 +650,10 @@ geometry_msgs::msg::PoseStamped TrajectoryInterpolator::transform_pose_to_odom(c
         } catch (const tf2::TransformException& ex) {
             RCLCPP_WARN_THROTTLE(get_logger(), *this->get_clock(), 1000, 
                                  "Transform failed: %s", ex.what());
-            transformed_pose.header.frame_id = "";  // Mark as failed
+            transformed_pose.header.frame_id = "";
         }
     } else {
-        // No transform, just change frame_id to odom
-        transformed_pose = pose_in_map;  // Copy the entire pose
+        transformed_pose = pose_in_map;
         transformed_pose.header.frame_id = _child_transf;
         transformed_pose.header.stamp = this->get_clock()->now();
         RCLCPP_INFO(get_logger(), "Transform disabled, using pose as-is in %s frame: [%.3f, %.3f, %.3f]",
@@ -677,7 +667,7 @@ geometry_msgs::msg::PoseStamped TrajectoryInterpolator::transform_pose_to_odom(c
 void TrajectoryInterpolator::tf_lookup_loop() {
     RCLCPP_INFO(get_logger(), "TF lookup thread started");
     
-    rclcpp::Rate rate(100);  // 100 Hz like trajectory_planner
+    rclcpp::Rate rate(100);
     while (rclcpp::ok()) {
         try {
             rclcpp::Time now = this->get_clock()->now();
@@ -699,30 +689,26 @@ std::vector<geometry_msgs::msg::PoseStamped> TrajectoryInterpolator::resample_pa
     }
     
     if (original_path.size() == 1) {
-        return original_path;  // Single waypoint, nothing to resample
+        return original_path;
     }
     
     std::vector<geometry_msgs::msg::PoseStamped> resampled_path;
     
-    // Always include the first waypoint
     resampled_path.push_back(original_path[0]);
     
     for (size_t i = 0; i < original_path.size() - 1; i++) {
         const auto& current_pose = original_path[i];
         const auto& next_pose = original_path[i + 1];
         
-        // Calculate distance between current and next waypoint
         double dx = next_pose.pose.position.x - current_pose.pose.position.x;
         double dy = next_pose.pose.position.y - current_pose.pose.position.y;
         double dz = next_pose.pose.position.z - current_pose.pose.position.z;
         double segment_length = std::sqrt(dx*dx + dy*dy + dz*dz);
         
         if (segment_length <= sampling_distance) {
-            // Segment is short enough, no need to subdivide
             continue;
         }
         
-        // Calculate number of intermediate waypoints needed
         int num_segments = static_cast<int>(std::ceil(segment_length / sampling_distance));
         double actual_step = segment_length / num_segments;
         
@@ -733,7 +719,6 @@ std::vector<geometry_msgs::msg::PoseStamped> TrajectoryInterpolator::resample_pa
             
             double ratio = (j * actual_step) / segment_length;
             
-            // Linear interpolation of position
             intermediate_pose.pose.position.x = current_pose.pose.position.x + ratio * dx;
             intermediate_pose.pose.position.y = current_pose.pose.position.y + ratio * dy;
             intermediate_pose.pose.position.z = current_pose.pose.position.z + ratio * dz;
@@ -749,13 +734,88 @@ std::vector<geometry_msgs::msg::PoseStamped> TrajectoryInterpolator::resample_pa
         }
     }
     
-    // Always include the last waypoint
     resampled_path.push_back(original_path.back());
     
     RCLCPP_INFO(get_logger(), "Resampled path: %zu → %zu waypoints (sampling distance: %.2f m)", 
                 original_path.size(), resampled_path.size(), sampling_distance);
     
     return resampled_path;
+}
+
+void TrajectoryInterpolator::teleop_active_callback(const std_msgs::msg::Bool::SharedPtr msg) {
+    bool previous_state = _teleop_active;
+    _teleop_active = msg->data;
+    
+    if (_teleop_active && !previous_state) {
+        // Teleop just activated - save current position as starting point
+        _teleop_base_position = _current_position.cast<double>();
+        _teleop_base_yaw = _ref_yaw;
+        
+        // Initialize command and reference position for seamless transition
+        _cmd_position = _current_position;
+        _cmd_yaw = _ref_yaw;
+        _ref_position = _current_position;
+        
+        RCLCPP_INFO(get_logger(), "Teleop mode ACTIVATED - starting from position [%.2f, %.2f, %.2f] yaw: %.2f", 
+                    _ref_position.x(), _ref_position.y(), _ref_position.z(), _ref_yaw);
+        
+        _velocity_increments.linear.x = 0.0;
+        _velocity_increments.linear.y = 0.0;
+        _velocity_increments.linear.z = 0.0;
+        _velocity_increments.angular.z = 0.0;
+    } else if (!_teleop_active && previous_state) {
+        // Teleop just deactivated
+        RCLCPP_INFO(get_logger(), "Teleop mode DEACTIVATED - final position [%.2f, %.2f, %.2f] yaw: %.2f", 
+                    _ref_position.x(), _ref_position.y(), _ref_position.z(), _ref_yaw);
+        
+        _cmd_position = _ref_position;
+        _cmd_yaw = _ref_yaw;
+        
+        _state = STOPPED;
+        
+        _ref_velocity = Eigen::Vector3f::Zero();
+        _ref_acceleration = Eigen::Vector3f::Zero();
+        _ref_yaw_rate = 0.0f;
+    }
+}
+
+void TrajectoryInterpolator::velocity_increments_callback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    if (_teleop_active) {
+        _velocity_increments = *msg;
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "Received velocity increments: linear[%.2f, %.2f, %.2f] angular[%.2f]",
+                             _velocity_increments.linear.x, _velocity_increments.linear.y, 
+                             _velocity_increments.linear.z, _velocity_increments.angular.z);
+    }
+}
+
+void TrajectoryInterpolator::handle_teleop_mode() {
+    // In teleop mode, integrate velocity commands to update position incrementally
+    double dt = _dt;
+    
+    _cmd_position.x() += _velocity_increments.linear.x * dt;
+    _cmd_position.y() += _velocity_increments.linear.y * dt;
+    _cmd_position.z() += _velocity_increments.linear.z * dt;
+    
+    _cmd_yaw += _velocity_increments.angular.z * dt;
+    
+    // Update reference position for publication
+    _ref_position = _cmd_position;
+    _ref_yaw = _cmd_yaw;
+    
+    _ref_velocity = Eigen::Vector3f(_velocity_increments.linear.x, 
+                                   _velocity_increments.linear.y, 
+                                   _velocity_increments.linear.z);
+    
+    _ref_acceleration = Eigen::Vector3f::Zero();
+    _ref_yaw_rate = _velocity_increments.angular.z;
+    
+    publish_trajectory_setpoint();
+    
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Teleop mode - Ref pos: [%.2f, %.2f, %.2f], vel: [%.2f, %.2f, %.2f], yaw: %.2f",
+                         _ref_position.x(), _ref_position.y(), _ref_position.z(),
+                         _ref_velocity.x(), _ref_velocity.y(), _ref_velocity.z(), _ref_yaw);
 }
 
 int main(int argc, char* argv[]) {

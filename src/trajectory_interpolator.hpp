@@ -9,7 +9,9 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>
 
 #include <Eigen/Eigen>
 #include <Eigen/Geometry>
@@ -58,6 +60,11 @@ private:
     void odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void vehicle_control_mode_callback(const px4_msgs::msg::VehicleControlMode::SharedPtr msg);
     void land_detected_callback(const px4_msgs::msg::VehicleLandDetected::SharedPtr msg);
+    void teleop_active_callback(const std_msgs::msg::Bool::SharedPtr msg);
+    void velocity_increments_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
+    
+    // Teleop handling
+    void handle_teleop_mode();
     
     // PX4 Commands
     void arm();
@@ -75,6 +82,8 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr _odometry_subscription;
     rclcpp::Subscription<px4_msgs::msg::VehicleControlMode>::SharedPtr _vehicle_control_mode_subscription;
     rclcpp::Subscription<px4_msgs::msg::VehicleLandDetected>::SharedPtr _land_detected_subscription;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr _teleop_active_subscription;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr _velocity_increments_subscription;
     
     // Timers
     rclcpp::TimerBase::SharedPtr _control_timer;
@@ -169,6 +178,12 @@ private:
     std::string _vehicle_command_topic;
     std::string _trajectory_setpoint_topic;
     std::string _status_topic;
+    
+    // Teleop coordination
+    bool _teleop_active{false};                    // Flag indicating if teleop mode is active
+    geometry_msgs::msg::Twist _velocity_increments; // Velocity increments from teleop
+    Eigen::Vector3d _teleop_base_position;         // Base position when teleop starts
+    double _teleop_base_yaw{0.0};                  // Base yaw when teleop starts
     
     std::atomic<uint64_t> _timestamp{0};
 };
