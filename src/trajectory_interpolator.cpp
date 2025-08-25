@@ -44,6 +44,22 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("ref_zeta", 0.7);
     _ref_zeta = this->get_parameter("ref_zeta").as_double();
     
+    // Z-axis specific parameters (optional, fallback to XY if not provided)
+    this->declare_parameter("ref_jerk_max_z", _ref_jerk_max);
+    _ref_jerk_max_z = this->get_parameter("ref_jerk_max_z").as_double();
+    
+    this->declare_parameter("ref_acc_max_z", _ref_acc_max);
+    _ref_acc_max_z = this->get_parameter("ref_acc_max_z").as_double();
+    
+    this->declare_parameter("ref_vel_max_z", _ref_vel_max);
+    _ref_vel_max_z = this->get_parameter("ref_vel_max_z").as_double();
+    
+    this->declare_parameter("ref_omega_z", _ref_omega);
+    _ref_omega_z = this->get_parameter("ref_omega_z").as_double();
+    
+    this->declare_parameter("ref_zeta_z", _ref_zeta);
+    _ref_zeta_z = this->get_parameter("ref_zeta_z").as_double();
+    
     this->declare_parameter("ref_yaw_jerk_max", 1.0);
     _ref_yaw_jerk_max = this->get_parameter("ref_yaw_jerk_max").as_double();
     
@@ -66,6 +82,9 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("vertical_movement_threshold", 0.2);
     _vertical_movement_threshold = this->get_parameter("vertical_movement_threshold").as_double();
     
+    this->declare_parameter("resampling_distance", 0.3);  // NEW: Configurable resampling distance (30cm default)
+    _resampling_distance = this->get_parameter("resampling_distance").as_double();
+    
     // TF parameters (like trajectory_planner)
     this->declare_parameter("parent_transform", "map");
     _parent_transf = this->get_parameter("parent_transform").as_string();
@@ -82,11 +101,16 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     RCLCPP_INFO(get_logger(), "TF: %s -> %s, do_transform: %s", 
                 _parent_transf.c_str(), _child_transf.c_str(), _do_transform ? "true" : "false");
     
+    // Log filter parameters
+    RCLCPP_INFO(get_logger(), "Filter params - XY: omega=%.2f, zeta=%.2f, vel_max=%.2f | Z: omega=%.2f, zeta=%.2f, vel_max=%.2f", 
+                _ref_omega, _ref_zeta, _ref_vel_max, _ref_omega_z, _ref_zeta_z, _ref_vel_max_z);
+    
     // Initialize publishers
     _offboard_control_mode_publisher = this->create_publisher<OffboardControlMode>(_offboard_control_mode_topic, 10);
     _vehicle_command_publisher = this->create_publisher<VehicleCommand>(_vehicle_command_topic, 10);
     _trajectory_setpoint_publisher = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>(_trajectory_setpoint_topic, 10);
     _status_publisher = this->create_publisher<std_msgs::msg::String>(_status_topic, 10);
+    _transformed_path_publisher = this->create_publisher<nav_msgs::msg::Path>("/trajectory_interpolator/transformed_path", 10);
     
     // Initialize subscribers
     rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -155,63 +179,76 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     clear_waypoint_queue();
     _has_target = false;
     
-    // Resample the path to have more waypoints (every 40cm)
-    std::vector<geometry_msgs::msg::PoseStamped> resampled_poses = resample_path(msg->poses, 0.4);
+    // Reset transformed path for new trajectory
+    _transformed_path.poses.clear();
+    _transformed_path.header.frame_id = "odom";
+    _transformed_path.header.stamp = this->get_clock()->now();
+    
+    // Publish empty path to clear previous visualization
+    _transformed_path_publisher->publish(_transformed_path);
+    RCLCPP_INFO(get_logger(), "Reset and published empty transformed path for new trajectory");
+    
+    // Resample the path to have more waypoints (configurable distance)
+    std::vector<geometry_msgs::msg::PoseStamped> resampled_poses = resample_path(msg->poses, _resampling_distance);
     
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
+        // Store waypoints in MAP frame - transform them only when needed with latest TF
         for (const auto& pose : resampled_poses) {
-            // Transform each waypoint from map to odom frame
-            geometry_msgs::msg::PoseStamped transformed_pose = transform_pose_to_odom(pose);
-            if (transformed_pose.header.frame_id != "") {  // Check if transformation was successful
-                _waypoint_queue.push(transformed_pose);
-            } else {
-                RCLCPP_WARN(get_logger(), "Failed to transform waypoint from map to odom, skipping");
-            }
+            _waypoint_queue.push(pose);  // Keep in original MAP frame
         }
     }
     
-    // Always start trajectory with first waypoint (regardless of current state)
+    // Transform and start with first waypoint immediately
     if (!_waypoint_queue.empty()) {
         std::lock_guard<std::mutex> lock(_queue_mutex);
-        _current_target = _waypoint_queue.front();
+        geometry_msgs::msg::PoseStamped first_waypoint = _waypoint_queue.front();
         _waypoint_queue.pop();
-        _has_target = true;
         
-        Eigen::Vector3f target_pos(
-            _current_target.pose.position.x,
-            _current_target.pose.position.y,
-            _current_target.pose.position.z
-        );
-        
-        // For single waypoint paths, maintain current yaw
-        // For multi-waypoint paths, calculate heading direction
-        float target_yaw;
-        if (resampled_poses.size() == 1) {
-            target_yaw = _ref_yaw;
-            RCLCPP_INFO(get_logger(), "Single waypoint detected - maintaining current yaw: %.3f", target_yaw);
+        // Transform the first waypoint with current TF
+        geometry_msgs::msg::PoseStamped transformed_pose = transform_pose_to_odom(first_waypoint);
+        if (transformed_pose.header.frame_id != "") {
+            _current_target = transformed_pose;
+            _has_target = true;
+            
+            Eigen::Vector3f target_pos(
+                _current_target.pose.position.x,
+                _current_target.pose.position.y,
+                _current_target.pose.position.z
+            );
+            
+            // For single waypoint paths, maintain current yaw
+            // For multi-waypoint paths, calculate heading direction
+            float target_yaw;
+            if (resampled_poses.size() == 1) {
+                target_yaw = _ref_yaw;
+                RCLCPP_INFO(get_logger(), "Single waypoint detected - maintaining current yaw: %.3f", target_yaw);
+            } else {
+                target_yaw = calculate_heading_yaw(_current_position, target_pos);
+            }
+            
+            set_new_target(target_pos, target_yaw);
+            _state = FOLLOWING_TRAJECTORY;
+            
+            // Reset counter only if not armed to avoid infinite loops
+            if (!_armed) {
+                _offboard_setpoint_counter = 0;
+                RCLCPP_INFO(get_logger(), "Starting new trajectory (resetting counter for unarmed drone)");
+            } else {
+                RCLCPP_INFO(get_logger(), "Starting new trajectory (maintaining counter for armed drone)");
+            }
+            
+            // Engage offboard mode immediately when starting trajectory
+            if (!_offboard_mode) {
+                RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
+                engage_offboard_mode();
+            }
         } else {
-            target_yaw = calculate_heading_yaw(_current_position, target_pos);
-        }
-        
-        set_new_target(target_pos, target_yaw);
-        _state = FOLLOWING_TRAJECTORY;
-        
-        // Reset counter only if not armed to avoid infinite loops
-        if (!_armed) {
-            _offboard_setpoint_counter = 0;
-            RCLCPP_INFO(get_logger(), "Starting new trajectory (resetting counter for unarmed drone)");
-        } else {
-            RCLCPP_INFO(get_logger(), "Starting new trajectory (maintaining counter for armed drone)");
-        }
-        
-        // Engage offboard mode immediately when starting trajectory
-        if (!_offboard_mode) {
-            RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
-            engage_offboard_mode();
+            RCLCPP_ERROR(get_logger(), "Failed to transform first waypoint, cannot start trajectory");
+            _state = STOPPED;
         }
     } else {
-        RCLCPP_ERROR(get_logger(), "No valid waypoints after transformation, cannot start trajectory");
+        RCLCPP_ERROR(get_logger(), "No waypoints in path, cannot start trajectory");
         _state = STOPPED;
     }
         
@@ -235,6 +272,12 @@ void TrajectoryInterpolator::odometry_callback(const nav_msgs::msg::Odometry::Sh
         msg->pose.pose.position.y,
         msg->pose.pose.position.z
     );
+    
+    // DEBUG: Log current position from odometry
+    RCLCPP_INFO_THROTTLE(get_logger(), *this->get_clock(), 2000,
+                         "Current position from odometry in frame '%s': [%.3f, %.3f, %.3f]",
+                         msg->header.frame_id.c_str(),
+                         _current_position(0), _current_position(1), _current_position(2));
     
     // Initialize reference values on first odometry message
     if (!_first_odom_received) {
@@ -317,12 +360,15 @@ void TrajectoryInterpolator::control_timer_callback() {
         if (should_advance_waypoint) {
             std::lock_guard<std::mutex> lock(_queue_mutex);
             if (!_waypoint_queue.empty()) {
-                _current_target = _waypoint_queue.front();
+                // Get next waypoint in MAP frame
+                geometry_msgs::msg::PoseStamped next_waypoint_map = _waypoint_queue.front();
                 _waypoint_queue.pop();
                 
-                // Transform the new waypoint with latest TF
-                geometry_msgs::msg::PoseStamped transformed_target = transform_pose_to_odom(_current_target);
+                // Transform with LATEST TF (this is critical for SLAM accuracy)
+                geometry_msgs::msg::PoseStamped transformed_target = transform_pose_to_odom(next_waypoint_map);
                 if (transformed_target.header.frame_id != "") {
+                    _current_target = transformed_target;
+                    
                     Eigen::Vector3f target_pos(
                         transformed_target.pose.position.x,
                         transformed_target.pose.position.y,
@@ -333,10 +379,23 @@ void TrajectoryInterpolator::control_timer_callback() {
                     
                     set_new_target(target_pos, target_yaw);
                     
-                    RCLCPP_INFO(get_logger(), "Advanced to next waypoint (at half distance): [%.3f, %.3f, %.3f], yaw: %.3f", 
+                    // Add transformed waypoint to path for visualization
+                    _transformed_path.poses.push_back(transformed_target);
+                    _transformed_path.header.frame_id = "odom";
+                    _transformed_path.header.stamp = this->get_clock()->now();
+                    
+                    // Publish updated transformed path
+                    _transformed_path_publisher->publish(_transformed_path);
+                    
+                    RCLCPP_INFO(get_logger(), "Published transformed path with %zu waypoints on topic: /trajectory_interpolator/transformed_path", 
+                               _transformed_path.poses.size());
+                    
+                    RCLCPP_INFO(get_logger(), 
+                               "Advanced to next waypoint with LATEST TF: MAP[%.3f,%.3f,%.3f] → ODOM[%.3f,%.3f,%.3f], yaw: %.3f", 
+                               next_waypoint_map.pose.position.x, next_waypoint_map.pose.position.y, next_waypoint_map.pose.position.z,
                                target_pos(0), target_pos(1), target_pos(2), target_yaw);
                 } else {
-                    RCLCPP_WARN(get_logger(), "Failed to transform next waypoint, skipping");
+                    RCLCPP_WARN(get_logger(), "Failed to transform next waypoint with latest TF, skipping");
                 }
             }
         }
@@ -384,33 +443,40 @@ void TrajectoryInterpolator::status_timer_callback() {
 }
 
 void TrajectoryInterpolator::interpolate_trajectory() {   
-    // Position interpolation
+    // Position interpolation with axis-specific parameters
     Eigen::Vector3f position_error = _cmd_position - _ref_position;
     Eigen::Vector3f desired_acceleration;
     
     for (int i = 0; i < 3; i++) {
-        desired_acceleration(i) = _ref_omega * _ref_omega * position_error(i) - 
-                                2.0 * _ref_zeta * _ref_omega * _ref_velocity(i);
+        // Use Z-specific parameters for vertical axis (i=2), XY parameters for horizontal axes
+        double omega = (i == 2) ? _ref_omega_z : _ref_omega;
+        double zeta = (i == 2) ? _ref_zeta_z : _ref_zeta;
+        double jerk_max = (i == 2) ? _ref_jerk_max_z : _ref_jerk_max;
         
-        // Jerk limiting
+        desired_acceleration(i) = omega * omega * position_error(i) - 
+                                2.0 * zeta * omega * _ref_velocity(i);
+        
+        // Jerk limiting with axis-specific limits
         float jerk = (desired_acceleration(i) - _ref_acceleration(i)) / _dt;
-        if (std::abs(jerk) > _ref_jerk_max) {
-            jerk = (jerk > 0.0) ? _ref_jerk_max : -_ref_jerk_max;
+        if (std::abs(jerk) > jerk_max) {
+            jerk = (jerk > 0.0) ? jerk_max : -jerk_max;
         }
         
         desired_acceleration(i) = _ref_acceleration(i) + jerk * _dt;
         
-        // Acceleration limiting
-        if (std::abs(desired_acceleration(i)) > _ref_acc_max) {
-            _ref_acceleration(i) = (desired_acceleration(i) > 0.0) ? _ref_acc_max : -_ref_acc_max;
+        // Acceleration limiting with axis-specific limits
+        double acc_max = (i == 2) ? _ref_acc_max_z : _ref_acc_max;
+        if (std::abs(desired_acceleration(i)) > acc_max) {
+            _ref_acceleration(i) = (desired_acceleration(i) > 0.0) ? acc_max : -acc_max;
         } else {
             _ref_acceleration(i) = desired_acceleration(i);
         }
         
-        // Velocity integration and limiting
+        // Velocity integration and limiting with axis-specific limits
         float desired_velocity = _ref_velocity(i) + _ref_acceleration(i) * _dt;
-        if (std::abs(desired_velocity) > _ref_vel_max) {
-            _ref_velocity(i) = (desired_velocity > 0.0) ? _ref_vel_max : -_ref_vel_max;
+        double vel_max = (i == 2) ? _ref_vel_max_z : _ref_vel_max;
+        if (std::abs(desired_velocity) > vel_max) {
+            _ref_velocity(i) = (desired_velocity > 0.0) ? vel_max : -vel_max;
         } else {
             _ref_velocity(i) = desired_velocity;
         }
@@ -504,11 +570,16 @@ void TrajectoryInterpolator::publish_vehicle_command(uint16_t command, float par
 void TrajectoryInterpolator::publish_trajectory_setpoint() {
     trajectory_msgs::msg::MultiDOFJointTrajectoryPoint msg{};
     
-    // Position
+    // Position (in odom frame)
     geometry_msgs::msg::Transform transform;
     transform.translation.x = _ref_position(0);
     transform.translation.y = _ref_position(1);
     transform.translation.z = _ref_position(2);
+    
+    // DEBUG: Log current setpoint being published
+    RCLCPP_INFO_THROTTLE(get_logger(), *this->get_clock(), 2000,
+                         "Publishing setpoint in odom frame: [%.3f, %.3f, %.3f]",
+                         _ref_position(0), _ref_position(1), _ref_position(2));
     
     // Orientation (from yaw)
     Eigen::Quaternionf q_ref(Eigen::AngleAxisf(_ref_yaw, Eigen::Vector3f::UnitZ()));
@@ -599,6 +670,11 @@ void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::Vehicle
             _state = IDLE;
             _has_target = false;
             clear_waypoint_queue();
+            
+            // Clear transformed path visualization on landing
+            _transformed_path.poses.clear();
+            _transformed_path_publisher->publish(_transformed_path);
+            RCLCPP_INFO(get_logger(), "Cleared transformed path visualization on landing");
         }
         
         disarm();

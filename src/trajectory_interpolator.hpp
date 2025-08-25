@@ -76,6 +76,7 @@ private:
     rclcpp::Publisher<VehicleCommand>::SharedPtr _vehicle_command_publisher;
     rclcpp::Publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>::SharedPtr _trajectory_setpoint_publisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _status_publisher;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr _transformed_path_publisher;
     
     // Subscribers
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscription;
@@ -131,6 +132,9 @@ private:
     geometry_msgs::msg::PoseStamped _current_target;
     bool _has_target{false};
     
+    // Path visualization
+    nav_msgs::msg::Path _transformed_path;
+    
     // Interpolation variables (ffilter implementation)
     Eigen::Vector3f _cmd_position{};      // Command position (target)
     Eigen::Vector3f _ref_position{};      // Reference position (filtered)
@@ -149,6 +153,13 @@ private:
     double _ref_omega{1.0};           // Filter frequency [rad/s]
     double _ref_zeta{0.7};            // Damping ratio
     
+    // Z-axis specific filter parameters (for more responsive altitude control)
+    double _ref_jerk_max_z{2.0};      // Maximum Z jerk [m/s³]
+    double _ref_acc_max_z{1.0};       // Maximum Z acceleration [m/s²]
+    double _ref_vel_max_z{1.0};       // Maximum Z velocity [m/s]
+    double _ref_omega_z{1.0};         // Z Filter frequency [rad/s]
+    double _ref_zeta_z{0.7};          // Z Damping ratio
+    
     double _ref_yaw_jerk_max{1.0};    // Maximum yaw jerk [rad/s³]
     double _ref_yaw_acc_max{0.5};     // Maximum yaw acceleration [rad/s²]
     double _ref_yaw_vel_max{0.5};     // Maximum yaw velocity [rad/s]
@@ -161,6 +172,7 @@ private:
     double _waypoint_tolerance{0.1};  // Distance tolerance to consider waypoint reached [m]
     double _yaw_tolerance{0.1};       // Yaw tolerance [rad]
     double _vertical_movement_threshold{0.2};  // Threshold to detect vertical movements (takeoff/landing)
+    double _resampling_distance{0.3}; // NEW: Configurable resampling distance [m]
     
     // TF2 for coordinate transformations
     std::shared_ptr<tf2_ros::Buffer> _tf_buffer;

@@ -26,6 +26,7 @@ trajectory_interpolator:
     control_frequency: 50.0    # Control loop frequency [Hz]
     waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m] - precise for real flight
     yaw_tolerance: 0.1         # Yaw tolerance [rad]
+    resampling_distance: 0.3   # NEW: Path resampling distance [m] (30cm default)
     
     # TF2 transforms (like trajectory_planner)
     parent_transform: "map"

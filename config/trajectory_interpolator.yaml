@@ -28,6 +28,7 @@ trajectory_interpolator:
     waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m]
     yaw_tolerance: 0.1         # Yaw tolerance [rad]
     vertical_movement_threshold: 0.2  # Threshold to detect vertical movements (takeoff/landing)
+    resampling_distance: 0.3   # NEW: Path resampling distance [m] (30cm default)
     
     # TF2 transforms (like trajectory_planner)
     parent_transform: "map"
