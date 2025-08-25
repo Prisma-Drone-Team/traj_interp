@@ -144,3 +144,18 @@ ros2 topic echo /px4/trajectory_setpoint_enu
 # Check transform tree
 ros2 run tf2_tools view_frames
 ```
+
+## License
+
+This trajectory interpolation system is part of the Drone Manager package.
+
+### Authors
+- **Simone D'Angelo** - simone.dangelo@unina.it
+- **Francesca Pagano** - francesca.pagano@unina.it  
+- **Vincenzo Scognamiglio** - vincenzo.scognamiglio2@unina.it
+
+**PRISMA LAB** - University of Naples Federico II
+
+---
+
+**Note**: This system is designed for research and development purposes. Always follow local aviation regulations and safety guidelines when operating autonomous vehicles.
