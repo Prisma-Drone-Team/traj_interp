@@ -10,22 +10,31 @@ trajectory_interpolator:
     trajectory_setpoint_topic: "/px4/trajectory_setpoint_enu"
     status_topic: "/trajectory_interpolator/status"
     
-    # Filter parameters for trajectory interpolation (ffilter) - real flight tuning
-    ref_jerk_max: 2.0          # Maximum jerk [m/s³] - conservative for real flight
-    ref_acc_max: 1.0           # Maximum acceleration [m/s²] - conservative for real flight
-    ref_vel_max: 1.0           # Maximum velocity [m/s] - conservative for real flight
-    ref_omega: 1.0             # Filter frequency [rad/s] - smooth for real flight
-    ref_zeta: 0.7              # Damping ratio
+    # Filter parameters for trajectory interpolation (ffilter) - axis-specific tuning
+    # XY motion (horizontal) - increased responsiveness for zero steady-state error
+    ref_jerk_max: 0.4          # Maximum jerk [m/s³] - reduced for smooth horizontal motion
+    ref_acc_max: 0.25          # Maximum acceleration [m/s²] - gentle horizontal acceleration  
+    ref_vel_max: 0.5           # Maximum velocity [m/s] - moderate horizontal speed
+    ref_omega: 1.5             # Filter frequency [rad/s] - increased for faster XY convergence
+    ref_zeta: 1.0              # Damping ratio - critically damped for optimal response
     
-    # Yaw filter parameters
-    ref_yaw_jerk_max: 1.0      # Maximum yaw jerk [rad/s³]
-    ref_yaw_acc_max: 0.5       # Maximum yaw acceleration [rad/s²]
-    ref_yaw_vel_max: 0.5       # Maximum yaw velocity [rad/s]
+    # Z motion (vertical) - moderately responsive for smooth altitude changes
+    ref_jerk_max_z: 0.6        # Maximum Z jerk [m/s³] - reduced for smoother altitude motion
+    ref_acc_max_z: 0.4         # Maximum Z acceleration [m/s²] - gentler vertical acceleration
+    ref_vel_max_z: 0.6         # Maximum Z velocity [m/s] - moderate vertical movement
+    ref_omega_z: 1.2           # Z Filter frequency [rad/s] - slightly more responsive than XY
+    ref_zeta_z: 1.1            # Z Damping ratio - slightly overdamped for smooth response
+    
+    # Yaw filter parameters - prioritized for forward-looking drone
+    ref_yaw_jerk_max: 2.0      # Maximum yaw jerk [rad/s³] - increased for quick orientation
+    ref_yaw_acc_max: 1.5       # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
+    ref_yaw_vel_max: 1.0       # Maximum yaw velocity [rad/s] - increased for fast reorientation
     
     # Control parameters
     control_frequency: 50.0    # Control loop frequency [Hz]
-    waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m] - precise for real flight
+    waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m]
     yaw_tolerance: 0.1         # Yaw tolerance [rad]
+    vertical_movement_threshold: 0.2  # Threshold to detect vertical movements (takeoff/landing)
     resampling_distance: 0.3   # NEW: Path resampling distance [m] (30cm default)
     
     # TF2 transforms (like trajectory_planner)
