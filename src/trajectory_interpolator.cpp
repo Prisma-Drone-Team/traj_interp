@@ -487,28 +487,29 @@ void TrajectoryInterpolator::interpolate_trajectory() {
     
     // Yaw interpolation
     float yaw_error = _cmd_yaw - _ref_yaw;
-    if (std::abs(yaw_error) > M_PI) {
-        yaw_error = yaw_error - 2.0f * M_PI * ((yaw_error > 0) ? 1 : -1);
-    }
-    
-    float desired_yaw_acceleration = _ref_omega * _ref_omega * yaw_error - 
-                                   2.0 * _ref_zeta * _ref_omega * _ref_yaw_rate;
-    
+
+    // Normalize yaw error to [-pi, pi] to always take the shortest path
+    while (yaw_error > M_PI) yaw_error -= 2.0f * M_PI;
+    while (yaw_error < -M_PI) yaw_error += 2.0f * M_PI;
+
+    float desired_yaw_acceleration = _ref_omega * _ref_omega * yaw_error -
+                                     2.0 * _ref_zeta * _ref_omega * _ref_yaw_rate;
+
     // Yaw jerk limiting
     float yaw_jerk = (desired_yaw_acceleration - _ref_yaw_acc) / _dt;
     if (std::abs(yaw_jerk) > _ref_yaw_jerk_max) {
         yaw_jerk = (yaw_jerk > 0.0) ? _ref_yaw_jerk_max : -_ref_yaw_jerk_max;
     }
-    
+
     desired_yaw_acceleration = _ref_yaw_acc + yaw_jerk * _dt;
-    
+
     // Yaw acceleration limiting
     if (std::abs(desired_yaw_acceleration) > _ref_yaw_acc_max) {
         _ref_yaw_acc = (desired_yaw_acceleration > 0.0) ? _ref_yaw_acc_max : -_ref_yaw_acc_max;
     } else {
         _ref_yaw_acc = desired_yaw_acceleration;
     }
-    
+
     // Yaw velocity integration and limiting
     float desired_yaw_rate = _ref_yaw_rate + _ref_yaw_acc * _dt;
     if (std::abs(desired_yaw_rate) > _ref_yaw_vel_max) {
@@ -516,10 +517,10 @@ void TrajectoryInterpolator::interpolate_trajectory() {
     } else {
         _ref_yaw_rate = desired_yaw_rate;
     }
-    
+
     // Yaw integration
     _ref_yaw += _ref_yaw_rate * _dt;
-    
+
     // Normalize yaw to [-pi, pi]
     while (_ref_yaw > M_PI) _ref_yaw -= 2.0 * M_PI;
     while (_ref_yaw < -M_PI) _ref_yaw += 2.0 * M_PI;
@@ -624,31 +625,36 @@ void TrajectoryInterpolator::publish_trajectory_setpoint() {
 
 float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& current_pos, const Eigen::Vector3f& target_pos) {
     Eigen::Vector3f direction = target_pos - current_pos;
-    
+
     float horizontal_distance = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
     float vertical_distance = std::abs(direction.z());
-    
+
     // If movement is predominantly vertical, maintain current yaw
     if (horizontal_distance < _vertical_movement_threshold * vertical_distance) {
         RCLCPP_INFO(get_logger(), "Vertical movement detected (h: %.3f, v: %.3f) - maintaining current yaw: %.3f", 
                    horizontal_distance, vertical_distance, _ref_yaw);
         return _ref_yaw;
     }
-    
+
     // For horizontal movements, calculate yaw angle from direction vector
     float yaw = std::atan2(direction.y(), direction.x());
-    
+
+    // Normalize yaw to [-pi, pi]
+    while (yaw > M_PI) yaw -= 2.0f * M_PI;
+    while (yaw < -M_PI) yaw += 2.0f * M_PI;
+
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
                horizontal_distance, vertical_distance, yaw);
-    
+
     return yaw;
 }
 
 float TrajectoryInterpolator::extract_yaw_from_quaternion(const Eigen::Quaternionf& q) {
     // Extract yaw from quaternion
-    float yaw = std::atan2(2.0f * (q.w() * q.z() + q.x() * q.y()), 
-                          1.0f - 2.0f * (q.y() * q.y() + q.z() * q.z()));
-    
+    // float yaw = std::atan2(2.0f * (q.w() * q.z() + q.x() * q.y()), 
+    //                       1.0f - 2.0f * (q.y() * q.y() + q.z() * q.z()));
+    Eigen::Vector3d rpy = utilities::quatToRpy(Eigen::Vector4d(q.w(), q.x(), q.y(), q.z()));
+    float yaw = rpy(2);
     return yaw;
 }
 

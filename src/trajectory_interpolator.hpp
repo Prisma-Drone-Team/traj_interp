@@ -21,14 +21,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
-// Utility function to extract yaw from quaternion
-float quaternion_to_yaw(const Eigen::Quaternionf& q) {
-    const float& q0 = q.w();
-    const float& q1 = q.x();
-    const float& q2 = q.y(); 
-    const float& q3 = q.z();
-    return std::atan2(2.0f * (q0 * q3 + q1 * q2), 1.0f - 2.0f * (q2 * q2 + q3 * q3));
-}
+#include "traj_interp/utils.h"
 
 #include <queue>
 #include <vector>
