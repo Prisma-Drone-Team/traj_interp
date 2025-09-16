@@ -111,6 +111,7 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _trajectory_setpoint_publisher = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>(_trajectory_setpoint_topic, 10);
     _status_publisher = this->create_publisher<std_msgs::msg::String>(_status_topic, 10);
     _transformed_path_publisher = this->create_publisher<nav_msgs::msg::Path>("/trajectory_interpolator/transformed_path", 10);
+    _interp_state_publisher = this->create_publisher<std_msgs::msg::String>("/seed_pdt_drone/state", 10);
     
     // Initialize subscribers
     rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -138,6 +139,14 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _velocity_increments_subscription = this->create_subscription<geometry_msgs::msg::Twist>(
         "/teleop/velocity_increments", 10,
         std::bind(&TrajectoryInterpolator::velocity_increments_callback, this, std::placeholders::_1));
+
+    _path_planner_goal_subscription = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        "/move_base_simple/goal", 10,
+        std::bind(&TrajectoryInterpolator::path_planner_goal_callback, this, std::placeholders::_1));
+
+    _path_mode_subscription = this->create_subscription<std_msgs::msg::String>(
+        "/move_manager/path_mode", 10,
+        std::bind(&TrajectoryInterpolator::path_mode_callback, this, std::placeholders::_1));
 
     // Initialize timers
     _control_timer = this->create_wall_timer(
@@ -417,6 +426,13 @@ void TrajectoryInterpolator::control_timer_callback() {
             _state = IDLE;
             RCLCPP_INFO(get_logger(), "Trajectory completed - reached final waypoint [%.3f, %.3f, %.3f]", 
                        _cmd_position(0), _cmd_position(1), _cmd_position(2));
+            
+            if (_current_path_mode == "circle") {
+            RCLCPP_INFO(get_logger(), "Last waypoint sent (circle mode).");
+            std_msgs::msg::String interp_state_msg;
+            interp_state_msg.data = "circle(" + _goal_frame + ").done";
+            _interp_state_publisher->publish(interp_state_msg);   
+            }
         }
     }
 }
@@ -869,6 +885,14 @@ void TrajectoryInterpolator::velocity_increments_callback(const geometry_msgs::m
                              _velocity_increments.linear.x, _velocity_increments.linear.y, 
                              _velocity_increments.linear.z, _velocity_increments.angular.z);
     }
+}
+
+void TrajectoryInterpolator::path_planner_goal_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) { 
+    _goal_frame = msg->header.frame_id.c_str();
+}
+
+void TrajectoryInterpolator::path_mode_callback(const std_msgs::msg::String::SharedPtr msg) {
+    _current_path_mode = msg->data;
 }
 
 void TrajectoryInterpolator::handle_teleop_mode() {
