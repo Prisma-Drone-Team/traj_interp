@@ -55,8 +55,6 @@ private:
     void land_detected_callback(const px4_msgs::msg::VehicleLandDetected::SharedPtr msg);
     void teleop_active_callback(const std_msgs::msg::Bool::SharedPtr msg);
     void velocity_increments_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
-    void path_planner_goal_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
-    void path_mode_callback(const std_msgs::msg::String::SharedPtr msg);
     
     // Teleop handling
     void handle_teleop_mode();
@@ -72,7 +70,7 @@ private:
     rclcpp::Publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>::SharedPtr _trajectory_setpoint_publisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _status_publisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr _transformed_path_publisher;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _interp_state_publisher;
+    
     // Subscribers
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscription;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr _odometry_subscription;
@@ -80,8 +78,7 @@ private:
     rclcpp::Subscription<px4_msgs::msg::VehicleLandDetected>::SharedPtr _land_detected_subscription;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr _teleop_active_subscription;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr _velocity_increments_subscription;
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr _path_planner_goal_subscription;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr _path_mode_subscription;
+    
     // Timers
     rclcpp::TimerBase::SharedPtr _control_timer;
     rclcpp::TimerBase::SharedPtr _status_timer;
@@ -186,7 +183,6 @@ private:
     std::string _vehicle_command_topic;
     std::string _trajectory_setpoint_topic;
     std::string _status_topic;
-    std::string _goal_frame;
     
     // Teleop coordination
     bool _teleop_active{false};                    // Flag indicating if teleop mode is active
@@ -195,5 +191,4 @@ private:
     double _teleop_base_yaw{0.0};                  // Base yaw when teleop starts
     
     std::atomic<uint64_t> _timestamp{0};
-    std::string _current_path_mode{"none"};        // Current path mode (e.g., "circle", "line", etc.)
 };
