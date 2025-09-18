@@ -239,10 +239,10 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
             }
             
             // Engage offboard mode immediately when starting trajectory
-            if (!_offboard_mode) {
-                RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
-                engage_offboard_mode();
-            }
+            // if (!_offboard_mode) {
+            //     RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
+            //     engage_offboard_mode();
+            // }
         } else {
             RCLCPP_ERROR(get_logger(), "Failed to transform first waypoint, cannot start trajectory");
             _state = STOPPED;
@@ -691,6 +691,10 @@ void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::Vehicle
 void TrajectoryInterpolator::arm() {
     publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
     RCLCPP_INFO(get_logger(), "Arm command sent");
+    if (!_offboard_mode) {
+        RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
+        engage_offboard_mode();
+    }
 }
 
 void TrajectoryInterpolator::disarm() {
