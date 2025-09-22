@@ -12,10 +12,10 @@ trajectory_interpolator:
     
     # Filter parameters for trajectory interpolation (ffilter) - axis-specific tuning
     # XY motion (horizontal) - increased responsiveness for zero steady-state error
-    ref_jerk_max: 0.4          # Maximum jerk [m/s³] - reduced for smooth horizontal motion
-    ref_acc_max: 0.25          # Maximum acceleration [m/s²] - gentle horizontal acceleration  
-    ref_vel_max: 0.5           # Maximum velocity [m/s] - moderate horizontal speed
-    ref_omega: 1.5             # Filter frequency [rad/s] - increased for faster XY convergence
+    ref_jerk_max: 0.2          # Maximum jerk [m/s³] - reduced for smooth horizontal motion
+    ref_acc_max: 0.15          # Maximum acceleration [m/s²] - gentle horizontal acceleration  
+    ref_vel_max: 0.35           # Maximum velocity [m/s] - moderate horizontal speed
+    ref_omega: 1.0             # Filter frequency [rad/s] - increased for faster XY convergence
     ref_zeta: 1.0              # Damping ratio - critically damped for optimal response
     
     # Z motion (vertical) - moderately responsive for smooth altitude changes
@@ -26,9 +26,9 @@ trajectory_interpolator:
     ref_zeta_z: 1.1            # Z Damping ratio - slightly overdamped for smooth response
     
     # Yaw filter parameters - prioritized for forward-looking drone
-    ref_yaw_jerk_max: 2.0      # Maximum yaw jerk [rad/s³] - increased for quick orientation
-    ref_yaw_acc_max: 1.5       # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
-    ref_yaw_vel_max: 1.0       # Maximum yaw velocity [rad/s] - increased for fast reorientation
+    ref_yaw_jerk_max: 0.3      # Maximum yaw jerk [rad/s³] - increased for quick orientation
+    ref_yaw_acc_max: 0.25      # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
+    ref_yaw_vel_max: 0.4       # Maximum yaw velocity [rad/s] - increased for fast reorientation
     
     # Control parameters
     control_frequency: 50.0    # Control loop frequency [Hz]
