@@ -5,6 +5,7 @@
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_control_mode.hpp>
 #include <px4_msgs/msg/vehicle_land_detected.hpp>
+#include <px4_msgs/msg/tilting_mc_desired_angles.hpp>
 #include <trajectory_msgs/msg/multi_dof_joint_trajectory_point.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -55,7 +56,8 @@ private:
     void land_detected_callback(const px4_msgs::msg::VehicleLandDetected::SharedPtr msg);
     void teleop_active_callback(const std_msgs::msg::Bool::SharedPtr msg);
     void velocity_increments_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
-    
+    void path_mode_callback(const std_msgs::msg::String::SharedPtr msg);
+
     // Teleop handling
     void handle_teleop_mode();
     
@@ -70,7 +72,8 @@ private:
     rclcpp::Publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>::SharedPtr _trajectory_setpoint_publisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _status_publisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr _transformed_path_publisher;
-    
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _debug_publisher;
+    rclcpp::Publisher<px4_msgs::msg::TiltingMcDesiredAngles>::SharedPtr _tilting_pub;
     // Subscribers
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscription;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr _odometry_subscription;
@@ -78,7 +81,7 @@ private:
     rclcpp::Subscription<px4_msgs::msg::VehicleLandDetected>::SharedPtr _land_detected_subscription;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr _teleop_active_subscription;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr _velocity_increments_subscription;
-    
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr _path_mode_subscription;
     // Timers
     rclcpp::TimerBase::SharedPtr _control_timer;
     rclcpp::TimerBase::SharedPtr _status_timer;
@@ -191,4 +194,14 @@ private:
     double _teleop_base_yaw{0.0};                  // Base yaw when teleop starts
     
     std::atomic<uint64_t> _timestamp{0};
+
+    int _loiter_segment;
+    double _tilting_goal_pitch = 0.0;
+    double _tilting_interp_rate = 0.1;
+    double _current_pitch = 0.0;
+    int _tilting_start_index = 0;
+    int _total_waypoints = 0;
+    int _current_waypoint_index = 0;
+    std::string _path_mode = "";
+    bool _tilting_on_pitch_enabled;
 };

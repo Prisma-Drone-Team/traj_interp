@@ -43,3 +43,9 @@ trajectory_interpolator:
     child_transform: "odom"
     do_transform: true         # Enable/disable transform from map to odom
     tf_buffer_timeout: 0.5     # TF lookup timeout [s]
+    
+    # Loiter and tilting parameters
+    loiter_segment: 8
+    tilting_goal_pitch_deg: -20.0 # Goal pitch angle for tilting multicopter [degrees]
+    tilting_interp_rate: 0.1       # Interpolation rate for pitch adjustment [0-1]
+    tilting_on_pitch_enabled: true  # Enable tilting multicopter behavior

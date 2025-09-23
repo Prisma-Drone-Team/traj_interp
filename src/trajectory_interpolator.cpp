@@ -98,6 +98,21 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("tf_buffer_timeout", 0.5);
     _tf_buffer_timeout = this->get_parameter("tf_buffer_timeout").as_double();
     
+    this->declare_parameter("loiter_segment", 8);
+    _loiter_segment = this->get_parameter("loiter_segment").as_int();
+
+    this->declare_parameter("tilting_goal_pitch_deg", 20.0);
+    _tilting_goal_pitch = this->get_parameter("tilting_goal_pitch_deg").as_double() * M_PI / 180.0; // radianti
+    this->declare_parameter("tilting_interp_rate", 0.1); // rad/s
+    _tilting_interp_rate = this->get_parameter("tilting_interp_rate").as_double();
+
+    this->declare_parameter("tilting_on_pitch_enabled", true);
+    _tilting_on_pitch_enabled = this->get_parameter("tilting_on_pitch_enabled").as_bool();
+
+    _tilting_pub = this->create_publisher<px4_msgs::msg::TiltingMcDesiredAngles>("fmu/in/tilting_mc_desired_angles", 10);
+
+    _current_pitch = 0.0;
+
     RCLCPP_INFO(get_logger(), "TF: %s -> %s, do_transform: %s", 
                 _parent_transf.c_str(), _child_transf.c_str(), _do_transform ? "true" : "false");
     
@@ -111,7 +126,7 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _trajectory_setpoint_publisher = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>(_trajectory_setpoint_topic, 10);
     _status_publisher = this->create_publisher<std_msgs::msg::String>(_status_topic, 10);
     _transformed_path_publisher = this->create_publisher<nav_msgs::msg::Path>("/trajectory_interpolator/transformed_path", 10);
-    
+    _debug_publisher = this->create_publisher<std_msgs::msg::String>("/traj_interp/completed", 10);
     // Initialize subscribers
     rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
     auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
@@ -130,6 +145,10 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
         "/fmu/out/vehicle_land_detected", qos,
         std::bind(&TrajectoryInterpolator::land_detected_callback, this, std::placeholders::_1));
     
+    _path_mode_subscription = this->create_subscription<std_msgs::msg::String>(
+        "/move_manager/path_mode", 10,
+        std::bind(&TrajectoryInterpolator::path_mode_callback, this, std::placeholders::_1));
+
     // Teleop coordination subscribers
     _teleop_active_subscription = this->create_subscription<std_msgs::msg::Bool>(
         "/move_manager/teleop_active", 10,
@@ -188,9 +207,42 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     _transformed_path_publisher->publish(_transformed_path);
     RCLCPP_INFO(get_logger(), "Reset and published empty transformed path for new trajectory");
     
+    //
     // Resample the path to have more waypoints (configurable distance)
-    std::vector<geometry_msgs::msg::PoseStamped> resampled_poses = resample_path(msg->poses, _resampling_distance);
-    
+    // std::vector<geometry_msgs::msg::PoseStamped> resampled_poses = resample_path(msg->poses, _resampling_distance);
+    //
+
+    std::vector<geometry_msgs::msg::PoseStamped> resampled_poses;
+    int loiter_segment = _loiter_segment;
+    int total_points = msg->poses.size();
+
+    if (_path_mode == "circle" && total_points > loiter_segment) {
+        // Divide il path in due parti
+        std::vector<geometry_msgs::msg::PoseStamped> approach_path(
+            msg->poses.begin(), msg->poses.end() - loiter_segment);
+        std::vector<geometry_msgs::msg::PoseStamped> circle_path(
+            msg->poses.end() - loiter_segment, msg->poses.end());
+
+        // Resample separatamente
+        auto resampled_approach = resample_path(approach_path, _resampling_distance);
+        auto resampled_circle = resample_path(circle_path, _resampling_distance);
+
+        // Salva l'indice di inizio tilting DOPO il resampling
+        _tilting_start_index = resampled_approach.size();
+
+        // Unisci i due path
+        resampled_poses = resampled_approach;
+        resampled_poses.insert(resampled_poses.end(), resampled_circle.begin(), resampled_circle.end());
+    } else {
+        // Caso normale: resample tutto insieme
+        resampled_poses = resample_path(msg->poses, _resampling_distance);
+        _tilting_start_index = resampled_poses.size(); // tilting mai abilitato
+    }
+
+    // Ora puoi usare _tilting_start_index per abilitare il tilting negli ultimi segmenti
+    _total_waypoints = resampled_poses.size();
+    _current_waypoint_index = 0;
+
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
         // Store waypoints in MAP frame - transform them only when needed with latest TF
@@ -397,6 +449,7 @@ void TrajectoryInterpolator::control_timer_callback() {
                 } else {
                     RCLCPP_WARN(get_logger(), "Failed to transform next waypoint with latest TF, skipping");
                 }
+                _current_waypoint_index++;
             }
         }
         
@@ -410,13 +463,20 @@ void TrajectoryInterpolator::control_timer_callback() {
             std::lock_guard<std::mutex> lock(_queue_mutex);
             queue_empty = _waypoint_queue.empty();
         }
-        
+
+        std_msgs::msg::String completed_msg;
         // Complete trajectory only when no more waypoints and very close to final target
         if (queue_empty && distance_error < _waypoint_tolerance && yaw_error < _yaw_tolerance) {
+            completed_msg.data = "traj_completed";
+            _debug_publisher->publish(completed_msg);
             _has_target = false;
             _state = IDLE;
             RCLCPP_INFO(get_logger(), "Trajectory completed - reached final waypoint [%.3f, %.3f, %.3f]", 
                        _cmd_position(0), _cmd_position(1), _cmd_position(2));
+        }
+        else{
+           completed_msg.data = "following_traj";
+            _debug_publisher->publish(completed_msg); 
         }
     }
 }
@@ -524,6 +584,34 @@ void TrajectoryInterpolator::interpolate_trajectory() {
     // Normalize yaw to [-pi, pi]
     while (_ref_yaw > M_PI) _ref_yaw -= 2.0 * M_PI;
     while (_ref_yaw < -M_PI) _ref_yaw += 2.0 * M_PI;
+    
+    // --- Loitering with variable pitch (only last segments) ---
+    if (_path_mode == "circle" && _state == FOLLOWING_TRAJECTORY && _current_waypoint_index >= _tilting_start_index && _tilting_on_pitch_enabled) {
+        RCLCPP_WARN(get_logger(), "Tilting pitch interpolation enabled: waypoint %d/%d (tilting from index %d), current_pitch: %.2f, goal_pitch: %.2f",
+                    _current_waypoint_index, _total_waypoints, _tilting_start_index, _current_pitch, _tilting_goal_pitch);
+        
+        if (_current_pitch < _tilting_goal_pitch) {
+            _current_pitch += _tilting_interp_rate * _dt;
+            if (_current_pitch > _tilting_goal_pitch) _current_pitch = _tilting_goal_pitch;
+        } else if (_current_pitch > _tilting_goal_pitch) {
+            _current_pitch -= _tilting_interp_rate * _dt;
+            if (_current_pitch < _tilting_goal_pitch) _current_pitch = _tilting_goal_pitch;
+        }
+    } 
+    else {
+        
+        if (_current_pitch > 0.0) {
+            _current_pitch -= _tilting_interp_rate * _dt;
+            if (_current_pitch < 0.0) _current_pitch = 0.0;
+        } else if (_current_pitch < 0.0) {
+            _current_pitch += _tilting_interp_rate * _dt;
+            if (_current_pitch > 0.0) _current_pitch = 0.0;
+        }
+    }
+    px4_msgs::msg::TiltingMcDesiredAngles pitch_msg;
+    pitch_msg.pitch_body = _current_pitch;
+    pitch_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+    _tilting_pub->publish(pitch_msg);
 }
 
 void TrajectoryInterpolator::set_new_target(const Eigen::Vector3f& target_pos, float target_yaw) {
@@ -687,6 +775,11 @@ void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::Vehicle
     }
 }
 
+void TrajectoryInterpolator::path_mode_callback(const std_msgs::msg::String::SharedPtr msg) {
+    _path_mode = msg->data;
+    RCLCPP_INFO(get_logger(), "Path mode updated: %s", _path_mode.c_str());
+}
+
 // PX4 Commands
 void TrajectoryInterpolator::arm() {
     publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
@@ -695,11 +788,17 @@ void TrajectoryInterpolator::arm() {
         RCLCPP_INFO(get_logger(), "Engaging offboard mode for trajectory execution");
         engage_offboard_mode();
     }
+    std_msgs::msg::String completed_msg;
+    completed_msg.data = "armed";
+    _debug_publisher->publish(completed_msg);
 }
 
 void TrajectoryInterpolator::disarm() {
     publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0);
     RCLCPP_INFO(get_logger(), "Disarm command sent");
+    std_msgs::msg::String completed_msg;    
+    completed_msg.data = "disarmed";
+    _debug_publisher->publish(completed_msg);
 }
 
 void TrajectoryInterpolator::engage_offboard_mode() {
