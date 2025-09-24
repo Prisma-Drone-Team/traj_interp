@@ -204,4 +204,6 @@ private:
     int _current_waypoint_index = 0;
     std::string _path_mode = "";
     bool _tilting_on_pitch_enabled;
+    bool _choose_final_yaw;
+    geometry_msgs::msg::PoseStamped _approach_penultimate;
 };

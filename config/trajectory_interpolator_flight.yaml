@@ -29,7 +29,8 @@ trajectory_interpolator:
     ref_yaw_jerk_max: 0.3      # Maximum yaw jerk [rad/s³] - increased for quick orientation
     ref_yaw_acc_max: 0.25      # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
     ref_yaw_vel_max: 0.4       # Maximum yaw velocity [rad/s] - increased for fast reorientation
-    
+    choose_final_yaw: true     # Use final waypoint yaw if in "flyto" mode
+
     # Control parameters
     control_frequency: 50.0    # Control loop frequency [Hz]
     waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m]

@@ -109,8 +109,9 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("tilting_on_pitch_enabled", true);
     _tilting_on_pitch_enabled = this->get_parameter("tilting_on_pitch_enabled").as_bool();
 
-    _tilting_pub = this->create_publisher<px4_msgs::msg::TiltingMcDesiredAngles>("fmu/in/tilting_mc_desired_angles", 10);
-
+    this->declare_parameter("choose_final_yaw", true);
+    _choose_final_yaw = this->get_parameter("choose_final_yaw").as_bool();
+    
     _current_pitch = 0.0;
 
     RCLCPP_INFO(get_logger(), "TF: %s -> %s, do_transform: %s", 
@@ -127,6 +128,8 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _status_publisher = this->create_publisher<std_msgs::msg::String>(_status_topic, 10);
     _transformed_path_publisher = this->create_publisher<nav_msgs::msg::Path>("/trajectory_interpolator/transformed_path", 10);
     _debug_publisher = this->create_publisher<std_msgs::msg::String>("/traj_interp/completed", 10);
+    _tilting_pub = this->create_publisher<px4_msgs::msg::TiltingMcDesiredAngles>("fmu/in/tilting_mc_desired_angles", 10);
+    
     // Initialize subscribers
     rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
     auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
@@ -220,6 +223,11 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         // Divide il path in due parti
         std::vector<geometry_msgs::msg::PoseStamped> approach_path(
             msg->poses.begin(), msg->poses.end() - loiter_segment);
+            if (!approach_path.empty() && approach_path.size() >= 2) {
+                _approach_penultimate = approach_path[approach_path.size() - 2];
+            } else if (!approach_path.empty()) {
+                _approach_penultimate = approach_path.back();
+            }
         std::vector<geometry_msgs::msg::PoseStamped> circle_path(
             msg->poses.end() - loiter_segment, msg->poses.end());
 
@@ -275,7 +283,8 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
             if (resampled_poses.size() == 1) {
                 target_yaw = _ref_yaw;
                 RCLCPP_INFO(get_logger(), "Single waypoint detected - maintaining current yaw: %.3f", target_yaw);
-            } else {
+            } 
+            else {
                 target_yaw = calculate_heading_yaw(_current_position, target_pos);
             }
             
@@ -730,6 +739,33 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
     // Normalize yaw to [-pi, pi]
     while (yaw > M_PI) yaw -= 2.0f * M_PI;
     while (yaw < -M_PI) yaw += 2.0f * M_PI;
+
+    // If this is the last waypoint and path_mode is "flyto", use the desired yaw from the waypoint orientation
+    if ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto" && _choose_final_yaw) {
+        yaw = utilities::quatToRpy(Eigen::Vector4d(
+            _current_target.pose.orientation.w,
+            _current_target.pose.orientation.x,
+            _current_target.pose.orientation.y,
+            _current_target.pose.orientation.z
+        ))(2);
+
+        RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw);
+    }
+    else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index + 1)) {
+        // Calculate yaw toward _approach_penultimate
+        Eigen::Vector3f center_pos(
+            _approach_penultimate.pose.position.x,
+            _approach_penultimate.pose.position.y,
+            _approach_penultimate.pose.position.z
+        );
+        Eigen::Vector3f to_center = center_pos - target_pos;
+        float center_yaw = std::atan2(to_center.y(), to_center.x());
+        // Normalize yaw to [-pi, pi]
+        while (center_yaw > M_PI) center_yaw -= 2.0f * M_PI;
+        while (center_yaw < -M_PI) center_yaw += 2.0f * M_PI;
+        RCLCPP_INFO(get_logger(), "Tilting active: forcing yaw toward circle center: %.3f", center_yaw);
+        yaw = center_yaw;
+    }
 
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
                horizontal_distance, vertical_distance, yaw);
