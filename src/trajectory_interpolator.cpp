@@ -483,10 +483,10 @@ void TrajectoryInterpolator::control_timer_callback() {
             RCLCPP_INFO(get_logger(), "Trajectory completed - reached final waypoint [%.3f, %.3f, %.3f]", 
                        _cmd_position(0), _cmd_position(1), _cmd_position(2));
         }
-        else{
+        else if(_path_mode == "flyto") {
            completed_msg.data = "following_traj";
             _debug_publisher->publish(completed_msg); 
-        }
+        } // this is useless for now
     }
 }
 
@@ -750,8 +750,11 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
         ))(2);
 
         RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw);
+        std_msgs::msg::String completed_msg;
+        completed_msg.data = "flyto_run";
+        _debug_publisher->publish(completed_msg);
     }
-    else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index + 1)) {
+    else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index - 1)) {
         // Calculate yaw toward _approach_penultimate
         Eigen::Vector3f center_pos(
             _approach_penultimate.pose.position.x,
@@ -765,6 +768,9 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
         while (center_yaw < -M_PI) center_yaw += 2.0f * M_PI;
         RCLCPP_INFO(get_logger(), "Tilting active: forcing yaw toward circle center: %.3f", center_yaw);
         yaw = center_yaw;
+        std_msgs::msg::String completed_msg;
+        completed_msg.data = "circle_run";
+        _debug_publisher->publish(completed_msg);
     }
 
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 

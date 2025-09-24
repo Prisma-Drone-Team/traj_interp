@@ -31,7 +31,7 @@ trajectory_interpolator:
     ref_yaw_acc_max: 1.5       # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
     ref_yaw_vel_max: 1.0       # Maximum yaw velocity [rad/s] - increased for fast reorientation
     choose_final_yaw: true     # Use final waypoint yaw if in "flyto" mode
-    
+
     # Control parameters
     control_frequency: 50.0    # Control loop frequency [Hz]
     waypoint_tolerance: 0.1    # Distance tolerance to consider waypoint reached [m]
@@ -47,6 +47,6 @@ trajectory_interpolator:
     
     # Loiter and tilting parameters
     loiter_segment: 8
-    tilting_goal_pitch_deg: -20.0 # Goal pitch angle for tilting multicopter [degrees]
-    tilting_interp_rate: 0.1       # Interpolation rate for pitch adjustment [0-1]
+    tilting_goal_pitch_deg: -20.0   # Goal pitch angle for tilting multicopter [degrees]
+    tilting_interp_rate: 0.05       # Interpolation rate for pitch adjustment [0-1]
     tilting_on_pitch_enabled: true  # Enable tilting multicopter behavior
