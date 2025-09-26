@@ -241,7 +241,8 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         // Unisci i due path
         resampled_poses = resampled_approach;
         resampled_poses.insert(resampled_poses.end(), resampled_circle.begin(), resampled_circle.end());
-    } else {
+    } 
+    else {
         // Caso normale: resample tutto insieme
         resampled_poses = resample_path(msg->poses, _resampling_distance);
         _tilting_start_index = resampled_poses.size(); // tilting mai abilitato
@@ -361,6 +362,10 @@ void TrajectoryInterpolator::odometry_callback(const nav_msgs::msg::Odometry::Sh
 
 void TrajectoryInterpolator::control_timer_callback() {
     if (!_first_odom_received) {
+        return;
+    }
+
+    if (!_offboard_mode && _startup) {
         return;
     }
     
@@ -740,37 +745,39 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
     while (yaw > M_PI) yaw -= 2.0f * M_PI;
     while (yaw < -M_PI) yaw += 2.0f * M_PI;
 
-    // If this is the last waypoint and path_mode is "flyto", use the desired yaw from the waypoint orientation
-    if ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto" && _choose_final_yaw) {
-        yaw = utilities::quatToRpy(Eigen::Vector4d(
-            _current_target.pose.orientation.w,
-            _current_target.pose.orientation.x,
-            _current_target.pose.orientation.y,
-            _current_target.pose.orientation.z
-        ))(2);
+    if(_choose_final_yaw){
+        // If this is the last waypoint and path_mode is "flyto", use the desired yaw from the waypoint orientation
+        if ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto") {
+            yaw = utilities::quatToRpy(Eigen::Vector4d(
+                _current_target.pose.orientation.w,
+                _current_target.pose.orientation.x,
+                _current_target.pose.orientation.y,
+                _current_target.pose.orientation.z
+            ))(2);
 
-        RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw);
-        std_msgs::msg::String completed_msg;
-        completed_msg.data = "flyto_run";
-        _debug_publisher->publish(completed_msg);
-    }
-    else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index - 1)) {
-        // Calculate yaw toward _approach_penultimate
-        Eigen::Vector3f center_pos(
-            _approach_penultimate.pose.position.x,
-            _approach_penultimate.pose.position.y,
-            _approach_penultimate.pose.position.z
-        );
-        Eigen::Vector3f to_center = center_pos - target_pos;
-        float center_yaw = std::atan2(to_center.y(), to_center.x());
-        // Normalize yaw to [-pi, pi]
-        while (center_yaw > M_PI) center_yaw -= 2.0f * M_PI;
-        while (center_yaw < -M_PI) center_yaw += 2.0f * M_PI;
-        RCLCPP_INFO(get_logger(), "Tilting active: forcing yaw toward circle center: %.3f", center_yaw);
-        yaw = center_yaw;
-        std_msgs::msg::String completed_msg;
-        completed_msg.data = "circle_run";
-        _debug_publisher->publish(completed_msg);
+            RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw);
+            std_msgs::msg::String completed_msg;
+            completed_msg.data = "flyto_run";
+            _debug_publisher->publish(completed_msg);
+        }
+        else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index - 2)) {
+            // Calculate yaw toward _approach_penultimate
+            Eigen::Vector3f center_pos(
+                _approach_penultimate.pose.position.x,
+                _approach_penultimate.pose.position.y,
+                _approach_penultimate.pose.position.z
+            );
+            Eigen::Vector3f to_center = center_pos - target_pos;
+            float center_yaw = std::atan2(to_center.y(), to_center.x());
+            // Normalize yaw to [-pi, pi]
+            while (center_yaw > M_PI) center_yaw -= 2.0f * M_PI;
+            while (center_yaw < -M_PI) center_yaw += 2.0f * M_PI;
+            RCLCPP_INFO(get_logger(), "Tilting active: forcing yaw toward circle center: %.3f", center_yaw);
+            yaw = center_yaw;
+            std_msgs::msg::String completed_msg;
+            completed_msg.data = "circle_run";
+            _debug_publisher->publish(completed_msg);
+        }
     }
 
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
@@ -792,27 +799,36 @@ float TrajectoryInterpolator::extract_yaw_from_quaternion(const Eigen::Quaternio
 void TrajectoryInterpolator::vehicle_control_mode_callback(const px4_msgs::msg::VehicleControlMode::SharedPtr msg) {
     _armed = msg->flag_armed;
     _offboard_mode = msg->flag_control_offboard_enabled;
+    if (_offboard_mode) {
+        _startup = true;
+    }
+    if (_was_offboard && !_offboard_mode) {
+        RCLCPP_WARN(get_logger(), "Exiting from OFFBOARD: activating safety mode (null setpoints)");
+        _state = STOPPED;
+        _has_target = false;
+    }
+    _was_offboard = _offboard_mode;
 }
 
 void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::VehicleLandDetected::SharedPtr msg) {
     bool was_landed = _landed;
-    _landed = msg->landed;
-    
-    // If drone just landed while armed, stop trajectory and disarm
+    // Consider landed if either 'landed' or 'maybe_landed' is true
+    _landed = msg->landed || msg->maybe_landed;
+
+    // If drone just landed (or maybe landed) while armed, stop trajectory and disarm
     if (_landed && !was_landed && _armed) {
-        RCLCPP_INFO(get_logger(), "Landing detected during flight - stopping trajectory and disarming");
-        
+        RCLCPP_INFO(get_logger(), "Landing detected (landed or maybe_landed) during flight - stopping trajectory and disarming");
+
         if (_state == FOLLOWING_TRAJECTORY) {
             _state = IDLE;
             _has_target = false;
             clear_waypoint_queue();
-            
+
             // Clear transformed path visualization on landing
             _transformed_path.poses.clear();
             _transformed_path_publisher->publish(_transformed_path);
             RCLCPP_INFO(get_logger(), "Cleared transformed path visualization on landing");
         }
-        
         disarm();
     }
 }

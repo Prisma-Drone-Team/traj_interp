@@ -112,6 +112,8 @@ private:
     bool _armed{false};
     bool _landed{true};
     bool _offboard_mode{false};
+    bool _was_offboard{false};
+    bool _startup{false};
     
     // Offboard control
     uint64_t _offboard_setpoint_counter{0};

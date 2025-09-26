@@ -27,9 +27,9 @@ trajectory_interpolator:
     ref_zeta_z: 1.1            # Z Damping ratio - slightly overdamped for smooth response
     
     # Yaw filter parameters - prioritized for forward-looking drone
-    ref_yaw_jerk_max: 2.0      # Maximum yaw jerk [rad/s³] - increased for quick orientation
-    ref_yaw_acc_max: 1.5       # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
-    ref_yaw_vel_max: 1.0       # Maximum yaw velocity [rad/s] - increased for fast reorientation
+    ref_yaw_jerk_max: 0.6      # Maximum yaw jerk [rad/s³] - increased for quick orientation
+    ref_yaw_acc_max: 0.3      # Maximum yaw acceleration [rad/s²] - increased for responsive yaw
+    ref_yaw_vel_max: 0.5       # Maximum yaw velocity [rad/s] - increased for fast reorientation
     choose_final_yaw: true     # Use final waypoint yaw if in "flyto" mode
 
     # Control parameters
