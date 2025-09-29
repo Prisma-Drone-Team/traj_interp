@@ -265,6 +265,13 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
         std::lock_guard<std::mutex> lock(_queue_mutex);
         geometry_msgs::msg::PoseStamped first_waypoint = _waypoint_queue.front();
         _waypoint_queue.pop();
+
+        // Publish "following_traj" until reaching the last waypoint
+        if (_current_waypoint_index < _total_waypoints - 1) {
+            std_msgs::msg::String completed_msg;
+            completed_msg.data = "following_traj";
+            _debug_publisher->publish(completed_msg); 
+        }
         
         // Transform the first waypoint with current TF
         geometry_msgs::msg::PoseStamped transformed_pose = transform_pose_to_odom(first_waypoint);
@@ -481,17 +488,17 @@ void TrajectoryInterpolator::control_timer_callback() {
         std_msgs::msg::String completed_msg;
         // Complete trajectory only when no more waypoints and very close to final target
         if (queue_empty && distance_error < _waypoint_tolerance && yaw_error < _yaw_tolerance) {
-            completed_msg.data = "traj_completed";
-            _debug_publisher->publish(completed_msg);
+            // completed_msg.data = "traj_completed";
+            // _debug_publisher->publish(completed_msg);
             _has_target = false;
             _state = IDLE;
             RCLCPP_INFO(get_logger(), "Trajectory completed - reached final waypoint [%.3f, %.3f, %.3f]", 
                        _cmd_position(0), _cmd_position(1), _cmd_position(2));
         }
-        else if(_path_mode == "flyto") {
-           completed_msg.data = "following_traj";
-            _debug_publisher->publish(completed_msg); 
-        } // this is useless for now
+        // else if(_path_mode == "flyto") {
+        //    completed_msg.data = "following_traj";
+        //     _debug_publisher->publish(completed_msg); 
+        // } // this is useless for now
     }
 }
 
