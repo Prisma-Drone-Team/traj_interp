@@ -1,0 +1,66 @@
+local_trajectory_interpolator:
+  ros__parameters:
+    # Simulation parameters
+    use_sim_time: true
+    
+    # Topic names
+    path_topic: "/trajectory_path"
+    odometry_topic: "/px4/odometry/out"
+    offboard_control_mode_topic: "fmu/in/offboard_control_mode"
+    vehicle_command_topic: "fmu/in/vehicle_command"
+    trajectory_setpoint_topic: "/px4/trajectory_setpoint_enu"
+    status_topic: "/local_traj_interp/status"
+    
+    # Local planner specific topics
+    obstacle_cloud_map_topic: "/local_grid_obstacle"
+    obstacle_cloud_body_topic: "/depth_camera/points"
+    local_planner_enable_topic: "/local_planner_enable"
+    collision_detected_topic: "/collision_detected"
+    
+    # Artificial Potential Fields parameters
+    max_lin_speed: 0.8
+    max_ang_speed: 0.5
+    safety_distance: 1.5              # Ridotto per essere più permissivo
+    lookahead_distance: 2.5
+    k_attractive: 1.0                 # Aumentato per bilanciare meglio
+    k_repulsive: 0.9                  # Ridotto per essere meno aggressivo
+    k_yaw: 0.8
+    
+    # Control parameters
+    control_frequency: 50.0           # Aumentato per controllo più fluido
+    waypoint_tolerance: 0.1
+    yaw_tolerance: 0.1
+    vertical_movement_threshold: 0.2
+    resampling_distance: 0.3
+    
+    # TF2 transforms
+    parent_transform: "drone/map"
+    child_transform: "odom"
+    do_transform: true
+    tf_buffer_timeout: 0.5
+    
+    # Artificial Potential Fields dynamics
+    force_smoothing_factor: 0.8
+    velocity_damping: 0.9
+    goal_attraction_threshold: 0.5
+    obstacle_influence_range: 1.8     # RAGGIO MASSIMO di influenza - forza repulsiva va a ZERO oltre questo valore
+    
+    # Nuovi parametri per potenziali non lineari e avoidance locale
+    local_avoidance_radius: 3.0       # Raggio per considerare ostacoli (non usato più con la nuova funzione)
+    repulsive_exp_factor: 2.0         # Fattore esponenziale per repulsione (non usato più)
+    min_obstacle_distance: 0.3        # Distanza minima critica (non usato più)
+    max_repulsive_force: 1.5          # Forza repulsiva massima RIDOTTA per evitare dominanza
+    
+    # Loiter and tilting parameters
+    loiter_segment: 8
+    tilting_goal_pitch_deg: -20.0
+    tilting_interp_rate: 0.05
+    tilting_on_pitch_enabled: true
+    
+    # Frame di riferimento
+    robot_frame: "base_link"
+    map_frame: "drone/map"
+    odom_frame: "odom"
+    
+    # Visualizzazione debug
+    enable_visualization: true

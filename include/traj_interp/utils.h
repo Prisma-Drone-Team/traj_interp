@@ -298,8 +298,6 @@ namespace utilities{
 		return rpy;
 	}
 
-
-	
 	inline Matrix3d RpyToMat( Vector3d rpy) {
 		double r, p, y;
 		r = rpy(0);
@@ -487,6 +485,52 @@ namespace utilities{
 		ad.block<3,3>(3,0) = utilities::skew(V.tail(3));
 		ad.block<3,3>(3,3) = utilities::skew(V.head(3));
 		return ad;
+	}
+
+	inline Vector3d pose_from_tf(geometry_msgs::msg::TransformStamped tf){
+		return Eigen::Vector3d(tf.transform.translation.x,tf.transform.translation.y,tf.transform.translation.z);
+	}
+
+	inline Vector3d rpy_from_tf(geometry_msgs::msg::TransformStamped tf){
+		return R2XYZ(QuatToMat(Eigen::Vector4d(tf.transform.rotation.w,tf.transform.rotation.x,tf.transform.rotation.y,tf.transform.rotation.z)));
+	}
+
+	inline Matrix3d R_from_tf(geometry_msgs::msg::TransformStamped tf){
+		return QuatToMat(Eigen::Vector4d(tf.transform.rotation.w,tf.transform.rotation.x,tf.transform.rotation.y,tf.transform.rotation.z));
+	}
+
+	inline void tf_from_T(geometry_msgs::msg::TransformStamped& tf ,Matrix4d T){
+
+		Eigen::Matrix3d R =  T.block(0,0,3,3);
+		Eigen::Vector3d p = T.block(0,3,3,1);
+		Eigen::Vector4d q = rot2quat(R);
+		tf.transform.rotation.w = q(0);
+		tf.transform.rotation.x = q(1);
+		tf.transform.rotation.y = q(2);
+		tf.transform.rotation.z = q(3);
+
+		tf.transform.translation.x = p(0);
+		tf.transform.translation.y = p(1);
+		tf.transform.translation.z = p(2);
+
+	}
+
+	inline double angleError(double target, double actual){
+		double MAX_VALUE = 2.0*M_PI;
+		double signedDiff = 0.0;
+		double raw_diff = actual > target ? actual - target : target - actual;
+		double mod_diff = fmod(raw_diff, MAX_VALUE); //equates rollover values. E.g 0 == 360 degrees in circle
+
+		if(mod_diff > (MAX_VALUE/2) ){
+			//There is a shorter path in opposite direction
+			signedDiff = (MAX_VALUE - mod_diff);
+			if(target>actual) signedDiff = signedDiff * -1;
+		} else {
+			signedDiff = mod_diff;
+			if(actual>target) signedDiff = signedDiff * -1;
+		}
+
+		return signedDiff;
 	}
 }
 
