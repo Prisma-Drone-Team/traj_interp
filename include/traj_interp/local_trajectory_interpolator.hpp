@@ -192,6 +192,7 @@ private:
     double _repulsive_exp_factor{2.0};        // Fattore esponenziale per repulsione
     double _min_obstacle_distance{0.3};       // Distanza minima critica
     double _max_repulsive_force{3.0};         // Forza repulsiva massima
+    double _attractive_scale_distance_max{2.0}; // d_max per scaling tanh della forza attrattiva (paper)
     
     // Obstacle clouds
     pcl::PointCloud<pcl::PointXYZ>::Ptr _map_obstacle_cloud{new pcl::PointCloud<pcl::PointXYZ>};

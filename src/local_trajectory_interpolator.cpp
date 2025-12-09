@@ -85,6 +85,9 @@ LocalTrajectoryInterpolator::LocalTrajectoryInterpolator() : rclcpp::Node("local
     this->declare_parameter("max_repulsive_force", 3.0);  // Forza repulsiva massima
     _max_repulsive_force = this->get_parameter("max_repulsive_force").as_double();
     
+    this->declare_parameter("attractive_scale_distance_max", 2.0);  // d_max per scaling tanh (era 1.5)
+    _attractive_scale_distance_max = this->get_parameter("attractive_scale_distance_max").as_double();
+    
     // Control parameters
     this->declare_parameter("control_frequency", 50.0);
     _control_frequency = this->get_parameter("control_frequency").as_double();
@@ -824,32 +827,24 @@ void LocalTrajectoryInterpolator::compute_apf_velocity() {
         
         Eigen::Vector3d g_m = get_lookahead_point(x_m_b);
         
-        // Calcolo forza attrattiva con scaling basato su distanza al goal
-        double distance_to_goal = (x_m_b - g_m).norm();
-        
-        // Riduci forza attrattiva quando sei vicino al goal
-        double attractive_scale = 1.0;
-        if (distance_to_goal < _goal_attraction_threshold) {
-            // Scala lineare: forza piena a _goal_attraction_threshold, 10% a waypoint_tolerance
-            attractive_scale = (distance_to_goal - _waypoint_tolerance) / 
-                              (_goal_attraction_threshold - _waypoint_tolerance);
-            attractive_scale = std::max(0.1, attractive_scale);  // Minimo 10% della forza
-            
-            RCLCPP_INFO_THROTTLE(get_logger(), *this->get_clock(), 1000,
-                "Near goal - Distance: %.3f, Attractive scale: %.3f", distance_to_goal, attractive_scale);
-        }
-        
-        // Calcola forza attrattiva con scaling della distanza per migliorare la risposta
+        // === FORMULA DEL PAPER: f_a = k_a * s(d_g) * û_g ===
         Eigen::Vector3d goal_direction = (g_m - x_m_b);
-        double goal_distance = goal_direction.norm();
+        double d_g = goal_direction.norm();  // Distanza al lookahead point
         
         Eigen::Vector3d Fa_o;
-        // Normalizza e applica scaling non lineare per la forza attrattiva
-        if (goal_distance > 1e-5) {
-            goal_direction.normalize();
-            // Forza attrattiva con componente proporzionale limitata
-            double proportional_force = std::min(goal_distance, 2.0);  // Limita la distanza massima considerata
-            Fa_o = R_o_m * _k_attractive * attractive_scale * proportional_force * goal_direction;
+        if (d_g > 1e-5) {
+            // Calcola versore û_g = (p^g - p^fb) / d_g
+            Eigen::Vector3d u_g = goal_direction / d_g;
+            
+            // Scaling con tangente iperbolica: s(d_g) = tanh(d_g / d_max)
+            double s_dg = std::tanh(d_g / _attractive_scale_distance_max);
+            
+            // Formula del paper: f_a = k_a * s(d_g) * û_g
+            Fa_o = R_o_m * _k_attractive * s_dg * u_g;
+            
+            RCLCPP_INFO_THROTTLE(get_logger(), *this->get_clock(), 1000,
+                "Paper formula - d_g: %.3f, d_max: %.3f, s(d_g): %.3f, ||f_a||: %.3f", 
+                d_g, _attractive_scale_distance_max, s_dg, Fa_o.norm());
         } else {
             Fa_o = Eigen::Vector3d::Zero();
         }
@@ -874,7 +869,7 @@ void LocalTrajectoryInterpolator::compute_apf_velocity() {
         
         // Damping progressivo basato sulla distanza dal goal
         double damping_factor = _velocity_damping;
-        if (distance_to_goal < _goal_attraction_threshold) {
+        if (d_g < _goal_attraction_threshold) {
             // Damping più forte vicino al goal per evitare oscillazioni
             damping_factor = _velocity_damping * 0.5;  // Dimezza velocità vicino al goal
         }
@@ -913,7 +908,7 @@ void LocalTrajectoryInterpolator::compute_apf_velocity() {
         // Debug delle forze per monitorare il bilanciamento
         RCLCPP_INFO_THROTTLE(get_logger(), *this->get_clock(), 1000,
             "APF Forces - Attractive: %.3f, Rep_map: %.3f, Rep_body: %.3f, Total: %.3f, Goal_dist: %.3f", 
-            Fa_o.norm(), Fr_m.norm(), Fr_b.norm(), Ftot_o.norm(), distance_to_goal);
+            Fa_o.norm(), Fr_m.norm(), Fr_b.norm(), Ftot_o.norm(), d_g);
 
         if (_enable_visualization) {
             publish_debug_visualization(Fa_o, Fr_m, Fr_b, Ftot_o, g_m);

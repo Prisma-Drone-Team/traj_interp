@@ -50,6 +50,7 @@ local_trajectory_interpolator:
     repulsive_exp_factor: 2.0         # Fattore esponenziale per repulsione (non usato più)
     min_obstacle_distance: 0.3        # Distanza minima critica (non usato più)
     max_repulsive_force: 1.5          # Forza repulsiva massima RIDOTTA per evitare dominanza
+    attractive_scale_distance_max: 2.0 # d_max per scaling tanh della forza attrattiva (paper)
     
     # Loiter and tilting parameters
     loiter_segment: 8
