@@ -389,13 +389,27 @@ void TrajectoryInterpolator::control_timer_callback() {
         interpolate_trajectory();
         publish_trajectory_setpoint();
     } else if (_state == STOPPED && !_teleop_active) {
-        // If stopped and not in teleop, maintain current position
-        _cmd_position = _current_position;
+        // If stopped (e.g. panic), capture current position once and hold it
+        if (!_armed) {
+            _cmd_position = _current_position;
+            _ref_position = _current_position;
+            _cmd_yaw = extract_yaw_from_quaternion(_current_attitude);
+            _ref_yaw = _cmd_yaw;
+        }
         _ref_velocity = Eigen::Vector3f::Zero();
         _ref_acceleration = Eigen::Vector3f::Zero();
         publish_trajectory_setpoint();
     } else {
-        // Publish current position as setpoint to maintain stability
+        // IDLE: Publish current setpoint to maintain stability
+        // Only track current odometry if disarmed (on the ground) to allow EKF convergence
+        if (!_armed) {
+            _cmd_position = _current_position;
+            _ref_position = _current_position;
+            _cmd_yaw = extract_yaw_from_quaternion(_current_attitude);
+            _ref_yaw = _cmd_yaw;
+        }
+        _ref_velocity = Eigen::Vector3f::Zero();
+        _ref_acceleration = Eigen::Vector3f::Zero();
         publish_trajectory_setpoint();
     }
     
@@ -753,8 +767,8 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
     while (yaw < -M_PI) yaw += 2.0f * M_PI;
 
     if(_choose_final_yaw){
-        // If this is the last waypoint and path_mode is "flyto", use the desired yaw from the waypoint orientation
-        if ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto") {
+        // If this is a single waypoint (takeoff/landing) OR the last waypoint of a "flyto" path, use the desired yaw from the waypoint orientation
+        if (_total_waypoints <= 1 || ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto")) {
             yaw = utilities::quatToRpy(Eigen::Vector4d(
                 _current_target.pose.orientation.w,
                 _current_target.pose.orientation.x,
@@ -876,20 +890,10 @@ geometry_msgs::msg::PoseStamped TrajectoryInterpolator::transform_pose_to_odom(c
     
     if (_do_transform) {
         try {
-            geometry_msgs::msg::PointStamped point_in, point_out;
-            point_in.header.stamp = this->get_clock()->now();
-            point_in.header.frame_id = _parent_transf;
-            point_in.point.x = pose_in_map.pose.position.x;
-            point_in.point.y = pose_in_map.pose.position.y;
-            point_in.point.z = pose_in_map.pose.position.z;
-            
-            tf2::doTransform(point_in, point_out, _tf_map_to_odom);
+            tf2::doTransform(pose_in_map, transformed_pose, _tf_map_to_odom);
             
             transformed_pose.header.frame_id = _child_transf;
             transformed_pose.header.stamp = this->get_clock()->now();
-            transformed_pose.pose.position.x = point_out.point.x;
-            transformed_pose.pose.position.y = point_out.point.y;
-            transformed_pose.pose.position.z = point_out.point.z;
             
             RCLCPP_INFO(get_logger(), "Transformed waypoint from [%.3f, %.3f, %.3f] in %s to [%.3f, %.3f, %.3f] in %s",
                         pose_in_map.pose.position.x, pose_in_map.pose.position.y, pose_in_map.pose.position.z,
