@@ -13,6 +13,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float64.hpp>
 
 #include <Eigen/Eigen>
 #include <Eigen/Geometry>
@@ -74,6 +75,7 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr _transformed_path_publisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _debug_publisher;
     rclcpp::Publisher<px4_msgs::msg::TiltingMcDesiredAngles>::SharedPtr _tilting_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr _cmd_yaw_publisher;
     // Subscribers
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscription;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr _odometry_subscription;

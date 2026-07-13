@@ -702,10 +702,17 @@ std::vector<geometry_msgs::msg::PoseStamped> LocalTrajectoryInterpolator::resamp
 
 void LocalTrajectoryInterpolator::handle_teleop_mode() {
     double dt = _dt;
-    
-    // In teleop mode, directly use velocity increments
-    _cmd_velocity.x() = _velocity_increments.linear.x;
-    _cmd_velocity.y() = _velocity_increments.linear.y; 
+
+    // In teleop mode, _velocity_increments are in body frame. Rotate to odom frame using current yaw
+    Eigen::Vector3d rpy = utilities::quatToRpy(Eigen::Vector4d(
+        _current_attitude.w(), _current_attitude.x(), _current_attitude.y(), _current_attitude.z()));
+    double yaw = rpy(2);
+
+    double vx_odom = _velocity_increments.linear.x * std::cos(yaw) - _velocity_increments.linear.y * std::sin(yaw);
+    double vy_odom = _velocity_increments.linear.x * std::sin(yaw) + _velocity_increments.linear.y * std::cos(yaw);
+
+    _cmd_velocity.x() = vx_odom;
+    _cmd_velocity.y() = vy_odom;
     _cmd_velocity.z() = _velocity_increments.linear.z;
     
     // Limit velocity

@@ -129,6 +129,7 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     _transformed_path_publisher = this->create_publisher<nav_msgs::msg::Path>("/trajectory_interpolator/transformed_path", 10);
     _debug_publisher = this->create_publisher<std_msgs::msg::String>("/traj_interp/completed", 10);
     _tilting_pub = this->create_publisher<px4_msgs::msg::TiltingMcDesiredAngles>("fmu/in/tilting_mc_desired_angles", 10);
+    _cmd_yaw_publisher = this->create_publisher<std_msgs::msg::Float64>("/trajectory_interpolator/cmd_yaw", 10);
     
     // Initialize subscribers
     rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -251,6 +252,29 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     // Ora puoi usare _tilting_start_index per abilitare il tilting negli ultimi segmenti
     _total_waypoints = resampled_poses.size();
     _current_waypoint_index = 0;
+
+    // Compute smoothed yaw using lookahead to prevent reacting to small zig-zags
+    if (_path_mode == "flyto" || _path_mode == "exploration" || _path_mode == "coverage") {
+        int lookahead_steps = static_cast<int>(2.0 / _resampling_distance); // 2.0 meters lookahead
+        if (lookahead_steps < 1) lookahead_steps = 1;
+        
+        for (size_t i = 0; i < resampled_poses.size(); ++i) {
+            // Preserve the very last waypoint's orientation, as it contains the goal orientation!
+            if (i == resampled_poses.size() - 1) {
+                continue; 
+            }
+
+            size_t target_idx = std::min(i + lookahead_steps, resampled_poses.size() - 1);
+            if (target_idx > i) {
+                double dx = resampled_poses[target_idx].pose.position.x - resampled_poses[i].pose.position.x;
+                double dy = resampled_poses[target_idx].pose.position.y - resampled_poses[i].pose.position.y;
+                double yaw = std::atan2(dy, dx);
+                tf2::Quaternion q;
+                q.setRPY(0, 0, yaw);
+                resampled_poses[i].pose.orientation = tf2::toMsg(q);
+            }
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
@@ -519,19 +543,23 @@ void TrajectoryInterpolator::control_timer_callback() {
 void TrajectoryInterpolator::status_timer_callback() {
     std_msgs::msg::String status_msg;
     
-    switch (_state) {
-        case IDLE:
-            status_msg.data = "IDLE";
-            break;
-        case FOLLOWING_TRAJECTORY:
-            status_msg.data = "FOLLOWING_TRAJECTORY";
-            break;
-        case STOPPED:
-            status_msg.data = "STOPPED";
-            break;
-        default:
-            status_msg.data = "UNKNOWN";
-            break;
+    if (_teleop_active) {
+        status_msg.data = "TELEOP";
+    } else {
+        switch (_state) {
+            case IDLE:
+                status_msg.data = "IDLE";
+                break;
+            case FOLLOWING_TRAJECTORY:
+                status_msg.data = "FOLLOWING_TRAJECTORY";
+                break;
+            case STOPPED:
+                status_msg.data = "STOPPED";
+                break;
+            default:
+                status_msg.data = "UNKNOWN";
+                break;
+        }
     }
     
     _status_publisher->publish(status_msg);
@@ -759,8 +787,18 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
         return _ref_yaw;
     }
 
-    // For horizontal movements, calculate yaw angle from direction vector
-    float yaw = std::atan2(direction.y(), direction.x());
+    float yaw = 0.0f;
+    if (_path_mode == "flyto" || _path_mode == "exploration" || _path_mode == "coverage") {
+        yaw = utilities::quatToRpy(Eigen::Vector4d(
+            _current_target.pose.orientation.w,
+            _current_target.pose.orientation.x,
+            _current_target.pose.orientation.y,
+            _current_target.pose.orientation.z
+        ))(2);
+    } else {
+        // For horizontal movements, calculate yaw angle from direction vector
+        yaw = std::atan2(direction.y(), direction.x());
+    }
 
     // Normalize yaw to [-pi, pi]
     while (yaw > M_PI) yaw -= 2.0f * M_PI;
@@ -1047,8 +1085,12 @@ void TrajectoryInterpolator::handle_teleop_mode() {
     // In teleop mode, integrate velocity commands to update position incrementally
     double dt = _dt;
     
-    _cmd_position.x() += _velocity_increments.linear.x * dt;
-    _cmd_position.y() += _velocity_increments.linear.y * dt;
+    // _velocity_increments are in body frame. Rotate to odom frame using _cmd_yaw
+    double vx_odom = _velocity_increments.linear.x * std::cos(_cmd_yaw) - _velocity_increments.linear.y * std::sin(_cmd_yaw);
+    double vy_odom = _velocity_increments.linear.x * std::sin(_cmd_yaw) + _velocity_increments.linear.y * std::cos(_cmd_yaw);
+    
+    _cmd_position.x() += vx_odom * dt;
+    _cmd_position.y() += vy_odom * dt;
     _cmd_position.z() += _velocity_increments.linear.z * dt;
     
     _cmd_yaw += _velocity_increments.angular.z * dt;
@@ -1057,14 +1099,17 @@ void TrajectoryInterpolator::handle_teleop_mode() {
     _ref_position = _cmd_position;
     _ref_yaw = _cmd_yaw;
     
-    _ref_velocity = Eigen::Vector3f(_velocity_increments.linear.x, 
-                                   _velocity_increments.linear.y, 
-                                   _velocity_increments.linear.z);
+    _ref_velocity = Eigen::Vector3f(vx_odom, vy_odom, _velocity_increments.linear.z);
     
     _ref_acceleration = Eigen::Vector3f::Zero();
     _ref_yaw_rate = _velocity_increments.angular.z;
     
     publish_trajectory_setpoint();
+    
+    // Publish _cmd_yaw so external nodes (e.g. VIO recovery FSM) can sync body-frame transforms
+    std_msgs::msg::Float64 yaw_msg;
+    yaw_msg.data = _cmd_yaw;
+    _cmd_yaw_publisher->publish(yaw_msg);
     
     RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
                          "Teleop mode - Ref pos: [%.2f, %.2f, %.2f], vel: [%.2f, %.2f, %.2f], yaw: %.2f",
