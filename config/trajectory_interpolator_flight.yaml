@@ -19,10 +19,10 @@ trajectory_interpolator:
     ref_zeta: 1.0              # Damping ratio - critically damped for optimal response
     
     # Z motion (vertical) - moderately responsive for smooth altitude changes
-    ref_jerk_max_z: 0.6        # Maximum Z jerk [m/s³] - reduced for smoother altitude motion
-    ref_acc_max_z: 0.4         # Maximum Z acceleration [m/s²] - gentler vertical acceleration
-    ref_vel_max_z: 0.6         # Maximum Z velocity [m/s] - moderate vertical movement
-    ref_omega_z: 1.2           # Z Filter frequency [rad/s] - slightly more responsive than XY
+    ref_jerk_max_z: 0.3        # Maximum Z jerk [m/s³] - reduced for smoother altitude motion
+    ref_acc_max_z: 0.2         # Maximum Z acceleration [m/s²] - gentler vertical acceleration
+    ref_vel_max_z: 0.25        # Maximum Z velocity [m/s] - slower takeoff/landing
+    ref_omega_z: 1.2           # Z Filter frequency [rad/s]
     ref_zeta_z: 1.1            # Z Damping ratio - slightly overdamped for smooth response
     
     # Yaw filter parameters - prioritized for forward-looking drone
