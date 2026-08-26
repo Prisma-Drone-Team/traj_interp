@@ -13,10 +13,22 @@ trajectory_interpolator:
     
     # Filter parameters for trajectory interpolation (ffilter) - axis-specific tuning
     # XY motion (horizontal) - increased responsiveness for zero steady-state error
-    ref_jerk_max: 0.4          # Maximum jerk [m/s³] - reduced for smooth horizontal motion
-    ref_acc_max: 0.25          # Maximum acceleration [m/s²] - gentle horizontal acceleration  
-    ref_vel_max: 0.5           # Maximum velocity [m/s] - moderate horizontal speed
-    ref_omega: 1.5             # Filter frequency [rad/s] - increased for faster XY convergence
+    # --- SPEED PROFILES ---
+    # To change the drone speed safely without drifting into walls, update ALL 5 parameters:
+    #
+    # PROFILE: Slow (0.5 m/s) - Original/Safe
+    # ref_jerk_max: 0.4 | ref_acc_max: 0.25 | ref_vel_max: 0.5 | ref_omega: 1.5 | ref_zeta: 1.0
+    #
+    # PROFILE: Moderate (1.0 m/s) - Responsive
+    # ref_jerk_max: 0.8 | ref_acc_max: 0.6  | ref_vel_max: 1.0 | ref_omega: 2.0 | ref_zeta: 1.0
+    #
+    # PROFILE: Fast (3.0 m/s) - Aggressive (Braking distance ~2.25m)
+    # ref_jerk_max: 2.5 | ref_acc_max: 2.0  | ref_vel_max: 3.0 | ref_omega: 3.0 | ref_zeta: 1.0
+    # ----------------------
+    ref_jerk_max: 0.4          # Maximum jerk [m/s³] - increased for tighter turns
+    ref_acc_max: 0.25           # Maximum acceleration [m/s²] - enough to brake in ~2.25m at 3m/s
+    ref_vel_max: 0.5           # Maximum velocity [m/s] - fast horizontal speed
+    ref_omega: 1.5             # Filter frequency [rad/s] - increased for faster waypoint tracking
     ref_zeta: 1.0              # Damping ratio - critically damped for optimal response
     
     # Z motion (vertical) - moderately responsive for smooth altitude changes

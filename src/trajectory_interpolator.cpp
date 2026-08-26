@@ -788,36 +788,23 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
     }
 
     float yaw = 0.0f;
-    if (_path_mode == "flyto" || _path_mode == "exploration" || _path_mode == "coverage") {
-        yaw = utilities::quatToRpy(Eigen::Vector4d(
-            _current_target.pose.orientation.w,
-            _current_target.pose.orientation.x,
-            _current_target.pose.orientation.y,
-            _current_target.pose.orientation.z
-        ))(2);
-    } else {
-        // For horizontal movements, calculate yaw angle from direction vector
-        yaw = std::atan2(direction.y(), direction.x());
-    }
-
-    // Normalize yaw to [-pi, pi]
-    while (yaw > M_PI) yaw -= 2.0f * M_PI;
-    while (yaw < -M_PI) yaw += 2.0f * M_PI;
+    
+    // First, calculate yaw assuming we want to face the direction of motion
+    yaw = std::atan2(direction.y(), direction.x());
+    
+    bool use_target_orientation = false;
 
     if(_choose_final_yaw){
         // If this is a single waypoint (takeoff/landing) OR the last waypoint of a "flyto" path, use the desired yaw from the waypoint orientation
         if (_total_waypoints <= 1 || ((_current_waypoint_index == _total_waypoints - 2) && _path_mode == "flyto")) {
-            yaw = utilities::quatToRpy(Eigen::Vector4d(
-                _current_target.pose.orientation.w,
-                _current_target.pose.orientation.x,
-                _current_target.pose.orientation.y,
-                _current_target.pose.orientation.z
-            ))(2);
+            use_target_orientation = true;
 
-            RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw);
-            std_msgs::msg::String completed_msg;
-            completed_msg.data = "flyto_run";
-            _debug_publisher->publish(completed_msg);
+            if (_path_mode == "flyto") {
+                RCLCPP_WARN(get_logger(), "target_yaw (last waypoint, flyto): %.3f", yaw); // placeholder, actual yaw printed below
+                std_msgs::msg::String completed_msg;
+                completed_msg.data = "flyto_run";
+                _debug_publisher->publish(completed_msg);
+            }
         }
         else if (_tilting_on_pitch_enabled && _path_mode == "circle" && _current_waypoint_index > (_tilting_start_index - 2)) {
             // Calculate yaw toward _approach_penultimate
@@ -837,7 +824,29 @@ float TrajectoryInterpolator::calculate_heading_yaw(const Eigen::Vector3f& curre
             completed_msg.data = "circle_run";
             _debug_publisher->publish(completed_msg);
         }
+    } else {
+        // When choose_final_yaw is disabled: only respect the target orientation
+        // for the very last waypoint of a flyto. For exploration/coverage,
+        // always use the motion-direction yaw (atan2) which was already computed above.
+        if (_path_mode == "flyto" && (_total_waypoints <= 1 || _current_waypoint_index == _total_waypoints - 2)) {
+            use_target_orientation = true;
+        }
+        // exploration and coverage always fly toward the direction of motion, never toward
+        // the (SLERP-interpolated, meaningless) waypoint quaternion from RRT.
     }
+    
+    if (use_target_orientation) {
+        yaw = utilities::quatToRpy(Eigen::Vector4d(
+            _current_target.pose.orientation.w,
+            _current_target.pose.orientation.x,
+            _current_target.pose.orientation.y,
+            _current_target.pose.orientation.z
+        ))(2);
+    }
+    
+    // Normalize yaw to [-pi, pi]
+    while (yaw > M_PI) yaw -= 2.0f * M_PI;
+    while (yaw < -M_PI) yaw += 2.0f * M_PI;
 
     RCLCPP_INFO(get_logger(), "Horizontal movement detected (h: %.3f, v: %.3f) - new yaw: %.3f", 
                horizontal_distance, vertical_distance, yaw);
