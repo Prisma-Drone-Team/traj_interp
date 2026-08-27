@@ -160,6 +160,11 @@ private:
     double _ref_omega_z{1.0};         // Z Filter frequency [rad/s]
     double _ref_zeta_z{0.7};          // Z Damping ratio
     
+    // Takeoff specific parameters
+    double _takeoff_jerk_max_z{0.4};
+    double _takeoff_acc_max_z{0.25};
+    double _takeoff_vel_max_z{0.5};
+    
     double _ref_yaw_jerk_max{1.0};    // Maximum yaw jerk [rad/s³]
     double _ref_yaw_acc_max{0.5};     // Maximum yaw acceleration [rad/s²]
     double _ref_yaw_vel_max{0.5};     // Maximum yaw velocity [rad/s]
@@ -209,5 +214,6 @@ private:
     std::string _path_mode = "";
     bool _tilting_on_pitch_enabled;
     bool _choose_final_yaw;
+    bool _is_takeoff = false;
     geometry_msgs::msg::PoseStamped _approach_penultimate;
 };

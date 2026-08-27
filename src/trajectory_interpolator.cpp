@@ -60,6 +60,16 @@ TrajectoryInterpolator::TrajectoryInterpolator() : rclcpp::Node("trajectory_inte
     this->declare_parameter("ref_zeta_z", _ref_zeta);
     _ref_zeta_z = this->get_parameter("ref_zeta_z").as_double();
     
+    // Takeoff specific parameters (default to Slow profile)
+    this->declare_parameter("takeoff_jerk_max_z", 0.4);
+    _takeoff_jerk_max_z = this->get_parameter("takeoff_jerk_max_z").as_double();
+    
+    this->declare_parameter("takeoff_acc_max_z", 0.25);
+    _takeoff_acc_max_z = this->get_parameter("takeoff_acc_max_z").as_double();
+    
+    this->declare_parameter("takeoff_vel_max_z", 0.5);
+    _takeoff_vel_max_z = this->get_parameter("takeoff_vel_max_z").as_double();
+    
     this->declare_parameter("ref_yaw_jerk_max", 1.0);
     _ref_yaw_jerk_max = this->get_parameter("ref_yaw_jerk_max").as_double();
     
@@ -574,7 +584,7 @@ void TrajectoryInterpolator::interpolate_trajectory() {
         // Use Z-specific parameters for vertical axis (i=2), XY parameters for horizontal axes
         double omega = (i == 2) ? _ref_omega_z : _ref_omega;
         double zeta = (i == 2) ? _ref_zeta_z : _ref_zeta;
-        double jerk_max = (i == 2) ? _ref_jerk_max_z : _ref_jerk_max;
+        double jerk_max = (i == 2) ? (_is_takeoff ? _takeoff_jerk_max_z : _ref_jerk_max_z) : _ref_jerk_max;
         
         desired_acceleration(i) = omega * omega * position_error(i) - 
                                 2.0 * zeta * omega * _ref_velocity(i);
@@ -588,7 +598,7 @@ void TrajectoryInterpolator::interpolate_trajectory() {
         desired_acceleration(i) = _ref_acceleration(i) + jerk * _dt;
         
         // Acceleration limiting with axis-specific limits
-        double acc_max = (i == 2) ? _ref_acc_max_z : _ref_acc_max;
+        double acc_max = (i == 2) ? (_is_takeoff ? _takeoff_acc_max_z : _ref_acc_max_z) : _ref_acc_max;
         if (std::abs(desired_acceleration(i)) > acc_max) {
             _ref_acceleration(i) = (desired_acceleration(i) > 0.0) ? acc_max : -acc_max;
         } else {
@@ -597,7 +607,7 @@ void TrajectoryInterpolator::interpolate_trajectory() {
         
         // Velocity integration and limiting with axis-specific limits
         float desired_velocity = _ref_velocity(i) + _ref_acceleration(i) * _dt;
-        double vel_max = (i == 2) ? _ref_vel_max_z : _ref_vel_max;
+        double vel_max = (i == 2) ? (_is_takeoff ? _takeoff_vel_max_z : _ref_vel_max_z) : _ref_vel_max;
         if (std::abs(desired_velocity) > vel_max) {
             _ref_velocity(i) = (desired_velocity > 0.0) ? vel_max : -vel_max;
         } else {
@@ -903,6 +913,12 @@ void TrajectoryInterpolator::land_detected_callback(const px4_msgs::msg::Vehicle
 
 void TrajectoryInterpolator::path_mode_callback(const std_msgs::msg::String::SharedPtr msg) {
     _path_mode = msg->data;
+    if (_path_mode == "takeoff") {
+        _is_takeoff = true;
+        RCLCPP_INFO(get_logger(), "Mode is takeoff, applying takeoff speed limits for Z.");
+    } else {
+        _is_takeoff = false;
+    }
     RCLCPP_INFO(get_logger(), "Path mode updated: %s", _path_mode.c_str());
 }
 

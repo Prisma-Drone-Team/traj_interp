@@ -32,11 +32,29 @@ trajectory_interpolator:
     ref_zeta: 1.0              # Damping ratio - critically damped for optimal response
     
     # Z motion (vertical) - moderately responsive for smooth altitude changes
-    ref_jerk_max_z: 0.3        # Maximum Z jerk [m/s³] - reduced for smoother altitude motion (was 0.6)
-    ref_acc_max_z: 0.2         # Maximum Z acceleration [m/s²] - gentler vertical acceleration (was 0.4)
-    ref_vel_max_z: 0.25        # Maximum Z velocity [m/s] - slower takeoff/landing (was 0.6)
-    ref_omega_z: 1.2           # Z Filter frequency [rad/s]
-    ref_zeta_z: 1.1            # Z Damping ratio - slightly overdamped for smooth response
+    # --- Z SPEED PROFILES ---
+    # To change the vertical speed safely, update ALL 5 parameters:
+    #
+    # PROFILE: Slow (0.5 m/s) - Original/Safe
+    # ref_jerk_max_z: 0.4 | ref_acc_max_z: 0.25 | ref_vel_max_z: 0.5 | ref_omega_z: 1.5 | ref_zeta_z: 1.0
+    #
+    # PROFILE: Moderate (1.0 m/s) - Responsive
+    # ref_jerk_max_z: 0.8 | ref_acc_max_z: 0.6  | ref_vel_max_z: 1.0 | ref_omega_z: 2.0 | ref_zeta_z: 1.0
+    #
+    # PROFILE: Fast (3.0 m/s) - Aggressive
+    # ref_jerk_max_z: 2.5 | ref_acc_max_z: 2.0  | ref_vel_max_z: 3.0 | ref_omega_z: 3.0 | ref_zeta_z: 1.0
+    # ------------------------
+    ref_jerk_max_z: 0.4        # Maximum Z jerk [m/s³]
+    ref_acc_max_z: 0.25        # Maximum Z acceleration [m/s²]
+    ref_vel_max_z: 0.5         # Maximum Z velocity [m/s]
+    ref_omega_z: 1.5           # Z Filter frequency [rad/s]
+    ref_zeta_z: 1.0            # Z Damping ratio
+    
+    # Takeoff specific limits (used only during the initial takeoff)
+    takeoff_jerk_max_z: 0.4    # Slower jerk for safe takeoff
+    takeoff_acc_max_z: 0.25    # Slower acceleration for safe takeoff
+    takeoff_vel_max_z: 0.5     # Slower velocity for safe takeoff
+
     
     # Yaw filter parameters - prioritized for forward-looking drone
     ref_yaw_jerk_max: 0.6      # Maximum yaw jerk [rad/s³] - increased for quick orientation
