@@ -211,6 +211,15 @@ void TrajectoryInterpolator::path_callback(const nav_msgs::msg::Path::SharedPtr 
     // Always clear current waypoint queue and reset state for new path
     clear_waypoint_queue();
     _has_target = false;
+
+    // Detect takeoff: single-waypoint path with mode "takeoff".
+    // Check path_mode here (mode is published before path with a delay to ensure ordering).
+    if (msg->poses.size() == 1 && _path_mode == "takeoff") {
+        _is_takeoff = true;
+        RCLCPP_INFO(get_logger(), "[path_callback] mode='takeoff': applying takeoff Z limits (%.2f m/s).", _takeoff_vel_max_z);
+    } else {
+        _is_takeoff = false;
+    }
     
     // Reset transformed path for new trajectory
     _transformed_path.poses.clear();
